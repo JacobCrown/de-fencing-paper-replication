@@ -27,8 +27,8 @@ class EvalConfig:
     MODEL_PATH = (
         "spynet_checkpoints/spynet_modified_epoch5_20250527-183441.pth"  # UPDATE THIS
     )
-    VIMEO_DIR = "C:/Users/jkoro/Desktop/Studia/Defencing_paper_replication/data_raw/vimeo_test_clean"  # UPDATE THIS if different
-    DEFENCING_DIR = "C:/Users/jkoro/Desktop/Studia/Defencing_paper_replication/data_raw/De-fencing-master/dataset"  # UPDATE THIS if different
+    VIMEO_DIR = "data_raw/vimeo_test_clean"  # UPDATE THIS if different
+    DEFENCING_DIR = "data_raw/De-fencing-master/dataset"  # UPDATE THIS if different
     # --- End of paths to update ---
 
     VANILLA_SPYNET_NAME = "sintel-final"  # For GT flow generation in FlowDataset

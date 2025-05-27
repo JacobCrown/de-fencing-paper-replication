@@ -16,8 +16,12 @@ from dataset_flow import FlowDataset
 # --- Konfiguracja Treningu ---
 class TrainConfig:
     # Ścieżki do danych
-    VIMEO_CLEAN_TEST_DIR: str = "C:/Users/jkoro/Desktop/Studia/Defencing_paper_replication/data_raw/vimeo_test_clean"  # Główny katalog vimeo_test_clean
-    DEFENCING_DIR: str = "C:/Users/jkoro/Desktop/Studia/Defencing_paper_replication/data_raw/De-fencing-master/dataset"  # Główny katalog DeFencing
+    VIMEO_CLEAN_TEST_DIR: str = (
+        "data_raw/vimeo_test_clean"  # Główny katalog vimeo_test_clean
+    )
+    DEFENCING_DIR: str = (
+        "data_raw/De-fencing-master/dataset"  # Główny katalog DeFencing
+    )
 
     # Nazwa modelu dla oryginalnego SPyNet (używanego w FlowDataset do GT)
     VANILLA_SPYNET_MODEL_NAME: str = "sintel-final"  # lub 'chairs-final' itp.
@@ -31,8 +35,8 @@ class TrainConfig:
     )
 
     # Parametry treningu
-    BATCH_SIZE: int = 16  # Dostosuj do pamięci GPU
-    NUM_EPOCHS: int = 10  # Docelowo 1000 jak w pracy
+    BATCH_SIZE: int = 64  # Dostosuj do pamięci GPU
+    NUM_EPOCHS: int = 1000  # Docelowo 1000 jak w pracy
     LEARNING_RATE: float = 1e-4
     WEIGHT_DECAY: float = 4e-5  # Z pracy (4*10^-5)
     START_EPOCH: int = 0  # Domyślnie zaczynamy od epoki 0

@@ -27,8 +27,8 @@ from spynet.dataset_flow import FlowDataset
 # --- Konfiguracja Wizualizacji ---
 class VisualizeConfig:
     # Ścieżki do danych (MUSISZ JE ZAKTUALIZOWAĆ!)
-    VIMEO_CLEAN_TEST_DIR = "C:/Users/jkoro/Desktop/Studia/Defencing_paper_replication/data_raw/vimeo_test_clean"
-    DEFENCING_DIR = "C:/Users/jkoro/Desktop/Studia/Defencing_paper_replication/data_raw/De-fencing-master/dataset"
+    VIMEO_CLEAN_TEST_DIR = "data_raw/vimeo_test_clean"
+    DEFENCING_DIR = "data_raw/De-fencing-master/dataset"
 
     # Nazwa modelu dla oryginalnego SPyNet (używanego w FlowDataset do GT)
     VANILLA_SPYNET_MODEL_NAME = "sintel-final"  # lub 'chairs-final' itp.
