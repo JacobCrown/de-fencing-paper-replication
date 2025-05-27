@@ -1,4 +1,4 @@
-#!/bash -l
+#!/bin/bash
 #SBATCH -J setup_train_spynet
 #SBATCH --partition lem-gpu-short
 #SBATCH --nodes=1
