@@ -6,6 +6,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import datetime  # Do nazywania plików wag
 import typing  # Import typing for Optional
+import torch.multiprocessing as mp
 
 # Importy z naszego modułu spynet
 from spynet_modified import SPyNetModified
@@ -258,8 +259,14 @@ def main(config: TrainConfig):
 
 
 if __name__ == "__main__":
-    # --- Ustaw tutaj ścieżki do swoich danych ---
-    # To są tylko przykładowe wartości, MUSISZ je zaktualizować!
+
+    # Set the multiprocessing start method for CUDA compatibility
+    try:
+        mp.set_start_method('spawn', force=True)
+        print("Set multiprocessing start method to 'spawn'.")
+    except RuntimeError:
+        print("Multiprocessing context already set, likely 'spawn'.")
+
     config = TrainConfig()
 
     if "path/to/" in config.VIMEO_CLEAN_TEST_DIR or "path/to/" in config.DEFENCING_DIR:
