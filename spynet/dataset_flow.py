@@ -216,7 +216,7 @@ class FlowDataset(Dataset):
         gt_flow = torch.zeros(
             2, self.train_frame_height, self.train_frame_width
         )  # Domyślnie
-        with torch.no_grad():
+        with torch.inference_mode():
             input_gt_flow_1 = bg1_aug_tensor.unsqueeze(0)
             input_gt_flow_2 = bg2_aug_tensor.unsqueeze(0)
 

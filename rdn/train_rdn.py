@@ -34,7 +34,7 @@ class TrainConfig:
     defencing_dir: str = "data_raw/De-fencing-master/dataset"
     outputs_dir: str = "./rdn_inpainting_checkpoints"
     spynet_m_weights_path: Optional[str] = (
-        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp50_20250528-110600.pth"
+        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth"
     )
     spynet_base_model_name: str = "sintel-final"
     spynet_device: str = (
@@ -45,10 +45,10 @@ class TrainConfig:
     )
 
     # RDN Architecture
-    num_features: int = 4
-    growth_rate: int = 4
-    num_blocks: int = 3
-    num_layers: int = 3
+    num_features: int = 2
+    growth_rate: int = 2
+    num_blocks: int = 2
+    num_layers: int = 2
     k_frames: int = 5  # Used to calculate num_input_channels
     # num_input_channels is derived from k_frames
     num_output_channels: int = 3
@@ -59,8 +59,8 @@ class TrainConfig:
     beta1: float = 0.9
     beta2: float = 0.999
     epsilon: float = 1e-8
-    num_epochs: int = 500
-    batch_size: int = 4
+    num_epochs: int = 10
+    batch_size: int = 1
     start_epoch: int = 0
 
     # Image/Patch size
@@ -71,7 +71,7 @@ class TrainConfig:
     save_every_n_epochs: int = 1
 
     # Data Subset for faster testing/debugging
-    subset_fraction: Optional[float] = 0.2
+    subset_fraction: Optional[float] = 0.05
     num_samples: Optional[int] = None
 
     # Misc

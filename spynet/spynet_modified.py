@@ -383,7 +383,7 @@ if __name__ == "__main__":
     print(f"Input shape: {dummy_frame1_rgbm.shape}")
 
     try:
-        with torch.no_grad():  # Inference mode
+        with torch.inference_mode():  # Inference mode
             output_flow = model(dummy_frame1_rgbm, dummy_frame2_rgbm)
         print(f"Forward pass successful. Output flow shape: {output_flow.shape}")
         # Expected output_flow shape: (B, 2, H, W) matching the finest preprocessed input dimensions

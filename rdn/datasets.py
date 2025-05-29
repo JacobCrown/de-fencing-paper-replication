@@ -113,7 +113,7 @@ class InpaintingDataset(Dataset):
         # Attempt to compile SPyNet-M for potential speedup
         if hasattr(torch, "compile") and self.spynet_target_device.type == "cuda":
             original_spynet_m_for_fallback = self.spynet_m  # Store original model
-            compile_mode = "reduce-overhead"
+            compile_mode = "max-autotune"
             is_compiled = False
             try:
                 print(
@@ -149,7 +149,7 @@ class InpaintingDataset(Dataset):
                         1, 4, dummy_h, dummy_w, device=self.spynet_target_device
                     )
 
-                    with torch.no_grad():
+                    with torch.inference_mode():
                         _ = compiled_model_candidate(dummy_input1, dummy_input2)
 
                     self.spynet_m = compiled_model_candidate  # Assign successfully tested compiled model
@@ -402,7 +402,7 @@ class InpaintingDataset(Dataset):
             )
             input_j_rgbm = torch.cat([I_j_current_tensor, S_j_current_tensor], dim=0)
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 f_kj_m_tensor = self.spynet_m(
                     input_k_rgbm.unsqueeze(0), input_j_rgbm.unsqueeze(0)
                 ).squeeze(0)
@@ -454,7 +454,7 @@ class InpaintingDataset(Dataset):
             raise
 
         # Expected channels: I_k^m (3), S_k (1), then for each of (K-1) non-keyframes:
-        # Î_j^m (3), Š_j (1), V_j (1), f_kj^m (2) -> total 7 per non-keyframe.
+        # Î_j^m (3), Š_j (1), V_j (1), f_kj_m (2) -> total 7 per non-keyframe.
         # Total = 3 + 1 + (self.k_frames - 1) * (3 + 1 + 1 + 2) = 4 + (K-1)*7
         expected_f_in_channels = (
             self.config.num_input_channels

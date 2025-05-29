@@ -234,7 +234,7 @@ def evaluate_model(eval_config_obj: EvalConfig):
 
     print("--- Starting evaluation ---")
     total_psnr, total_ssim, num_images_processed = 0.0, 0.0, 0
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch_idx, (f_in_batch, i_k_m_batch, b_k_batch) in tqdm(
             enumerate(eval_dataloader), total=len(eval_dataloader), desc="Evaluating"
         ):

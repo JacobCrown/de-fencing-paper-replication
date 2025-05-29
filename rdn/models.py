@@ -139,7 +139,7 @@ def run_basic_model_test():
         print(f"Created dummy input f_in with shape: {dummy_f_in.shape}")
 
         # 3. Perform a forward pass
-        with torch.no_grad():
+        with torch.inference_mode():
             output_residual = model(dummy_f_in)
         print(
             f"Model forward pass successful. Output (residual) shape: {output_residual.shape}"

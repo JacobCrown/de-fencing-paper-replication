@@ -31,16 +31,20 @@ class DDPConfig:
     )
     defencing_dir: str = "data_raw/De-fencing-master/dataset"
     outputs_dir: str = "./rdn_inpainting_checkpoints_ddp"
-    spynet_m_weights_path: Optional[str] = "path/to/your/spynet_m_weights.pth"
+    spynet_m_weights_path: Optional[str] = (
+        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth"
+    )
     spynet_base_model_name: str = "sintel-final"
-    spynet_device: str = "cpu"
+    spynet_device: str = (
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )  # Changed default
     resume_checkpoint: Optional[str] = None
 
     # RDN Architecture
-    num_features: int = 64
-    growth_rate: int = 64
-    num_blocks: int = 16
-    num_layers: int = 8
+    num_features: int = 2
+    growth_rate: int = 2
+    num_blocks: int = 2
+    num_layers: int = 2
     k_frames: int = 5
     num_output_channels: int = 3
 
@@ -69,7 +73,7 @@ class DDPConfig:
     dist_backend: str = "nccl"
 
     # Misc
-    num_workers: int = 2
+    num_workers: int = 0
     # device is determined by local_rank
 
     def __init__(self, **kwargs):

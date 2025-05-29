@@ -26,7 +26,7 @@ except ImportError as e:
 class TestSpeedConfig:
     # --- User should verify this path ---
     spynet_m_weights_path: str = (
-        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp50_20250528-110600.pth"
+        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth"
     )
     # This is the name of the base SPyNet model structure, not necessarily the weights that will be loaded if pretrained=False.
     # It influences the initial architecture before custom weights are loaded.
@@ -34,14 +34,12 @@ class TestSpeedConfig:
 
     img_width: int = 320
     img_height: int = 192
-    batch_size: int = 1  # Typically, inference in this context might be on single frames or small batches
+    batch_size: int = 8  # Typically, inference in this context might be on single frames or small batches
 
-    num_warmup_runs: int = 50
-    num_test_runs: int = 100
+    num_warmup_runs: int = 20
+    num_test_runs: int = 50
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    compile_mode: str = (
-        "reduce-overhead"  # "default", "reduce-overhead", or "max-autotune"
-    )
+    compile_mode: str = "max-autotune"
 
     # Derived attributes
     actual_img_height: int
@@ -134,7 +132,7 @@ def measure_inference_time(
             torch.cuda.synchronize()  # Wait for all preceding CUDA ops to finish
 
         start_time_ns = time.perf_counter_ns()
-        with torch.no_grad():
+        with torch.inference_mode():
             _ = model(input1, input2)
 
         if target_device.type == "cuda":
