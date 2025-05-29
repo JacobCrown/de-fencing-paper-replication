@@ -2,52 +2,56 @@ import os
 import time
 import datetime
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-import torch.nn as nn
 from tqdm import tqdm
 import sys
+import json
 from typing import Optional, List, Dict, Any
-from collections import OrderedDict  # For loading state_dict
+from collections import OrderedDict
 import matplotlib.pyplot as plt
 
 # Setup sys.path for sibling imports
-current_dir_rdn = os.path.dirname(os.path.abspath(__file__))
-parent_dir_rdn = os.path.dirname(current_dir_rdn)
-if parent_dir_rdn not in sys.path:
-    sys.path.append(parent_dir_rdn)
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+rdn_dir = os.path.dirname(current_script_dir)  # rdn/
+project_root_dir = os.path.dirname(rdn_dir)  # project root
 
-try:
-    from spynet.spynet_modified import SPyNetModified
-except ImportError as e:
-    print(f"Could not import SPyNetModified. Ensure spynet module is accessible: {e}")
-    SPyNetModified = None
+if project_root_dir not in sys.path:
+    sys.path.append(project_root_dir)
+if rdn_dir not in sys.path:
+    sys.path.append(rdn_dir)  # To find rdn.models etc.
+if current_script_dir not in sys.path:
+    sys.path.append(current_script_dir)  # To find precomputed_rdn_dataset
 
-from rdn.models import RDNInpainting
-from rdn.datasets import InpaintingDataset
+from rdn.models import RDNInpainting  # Assuming this is in rdn/models.py
+from precomputed_rdn_dataset import PrecomputedRDNDataset  # From rdn/test/
 
 
-class TrainConfig:
+class PrecomputedTrainConfig:
     # Paths
-    vimeo_dir: str = "data_raw/vimeo_test_clean/sequences"
-    defencing_dir: str = "data_raw/De-fencing-master/dataset"
-    outputs_dir: str = "./rdn_inpainting_outputs"  # Changed to a more general name
+    precomputed_train_data_dir: str = "data_precomputed/rdn_data/train"
+    precomputed_val_data_dir: Optional[str] = "data_precomputed/rdn_data/val"
+    outputs_dir: str = "./rdn_inpainting_outputs_precomputed"
     checkpoint_dir: str = os.path.join(outputs_dir, "checkpoints")
-
-    spynet_m_weights_path: Optional[str] = (
-        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth"
-    )
-    spynet_base_model_name: str = "sintel-final"
-    spynet_device: str = "cuda" if torch.cuda.is_available() else "cpu"
     resume_checkpoint: Optional[str] = None
+    # Path to the generation_config.json used to create the precomputed data
+    # This helps ensure model architecture matches the data.
+    generation_config_path: Optional[str] = (
+        "data_precomputed/rdn_data/generation_config.json"
+    )
 
-    # RDN Architecture
-    num_features: int = 1
-    growth_rate: int = 1
-    num_blocks: int = 1
-    num_layers: int = 1
-    k_frames: int = 5
-    num_output_channels: int = 3
+    # RDN Architecture (will be overridden by generation_config if provided and valid)
+    # These are placeholders; ideally, they match what was used for data generation.
+    num_features: int = 8
+    growth_rate: int = 8
+    num_blocks: int = 4
+    num_layers: int = 4
+    k_frames: int = 5  # Should match data generation
+    num_output_channels: int = 3  # Typically 3 for RGB
+    num_input_channels: Optional[int] = None  # Derived from k_frames or gen_config
+    img_width: int = 320
+    img_height: int = 192
 
     # Training Params
     learning_rate: float = 1e-4
@@ -55,26 +59,15 @@ class TrainConfig:
     beta1: float = 0.9
     beta2: float = 0.999
     epsilon: float = 1e-8
-    num_epochs: int = 100
-    batch_size: int = 4
+    num_epochs: int = 200
+    batch_size: int = 32
     start_epoch: int = 0
 
-    # Image/Patch size
-    img_width: int = 320
-    img_height: int = 192
-
     # Checkpointing & Saving
-    save_every_n_epochs: int = 1
+    save_every_n_epochs: int = 10
     save_best_model_only_on_val: bool = True
 
-    # Data Subset for faster testing/debugging
-    train_subset_fraction: Optional[float] = 0.01
-    val_subset_fraction: Optional[float] = 0.01
-    subset_fraction: Optional[float] = (
-        None  # Generic field for InpaintingDataset compatibility
-    )
-
-    # Enhancements
+    # Enhancements (subset fractions are not used as dataset size is fixed by precomputation)
     validation_enabled: bool = True
     lr_scheduler_enabled: bool = True
     lr_scheduler_patience: int = 5
@@ -82,67 +75,102 @@ class TrainConfig:
     gradient_clipping_norm: Optional[float] = None
 
     # Misc
-    num_workers: int = 0
+    num_workers: int = (
+        0  # For precomputed data, 0 might be fine or even preferred initially
+    )
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    num_input_channels: Optional[int] = None  # Derived
 
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
 
-        # Derive num_input_channels after all potential k_frames updates
-        if self.num_input_channels is None and self.k_frames is not None:
-            self.num_input_channels = 4 + (self.k_frames - 1) * 7
-        elif self.num_input_channels is None and self.k_frames is None:
-            raise ValueError(
-                "k_frames must be set to derive num_input_channels if not provided directly."
+        # This section attempts to load generation_config.
+        # It's useful for NEW runs to match data.
+        # If resuming from a checkpoint, the checkpoint's config will later override model arch.
+        loaded_gen_cfg = self._load_generation_config()
+        if loaded_gen_cfg:
+            print(
+                "Updating PrecomputedTrainConfig with parameters from generation_config.json (for defaults/new runs):"
             )
+            self.k_frames = loaded_gen_cfg.get("k_frames", self.k_frames)
+            self.img_width = loaded_gen_cfg.get("img_width", self.img_width)
+            self.img_height = loaded_gen_cfg.get("img_height", self.img_height)
+            # RDN arch params from gen_cfg IF they exist (less common, but supports it)
+            self.num_features = loaded_gen_cfg.get("num_features", self.num_features)
+            self.growth_rate = loaded_gen_cfg.get("growth_rate", self.growth_rate)
+            self.num_blocks = loaded_gen_cfg.get("num_blocks", self.num_blocks)
+            self.num_layers = loaded_gen_cfg.get("num_layers", self.num_layers)
+            # num_input_channels is critical and should come from gen_config if possible for new runs
+            if "num_input_channels" in loaded_gen_cfg:
+                self.num_input_channels = loaded_gen_cfg["num_input_channels"]
+            print(
+                f"  Updated k_frames: {self.k_frames}, img_width: {self.img_width}, img_height: {self.img_height}"
+            )
+            print(
+                f"  Updated RDN arch: num_features={self.num_features}, growth_rate={self.growth_rate}, num_blocks={self.num_blocks}, num_layers={self.num_layers}"
+            )
+            if "num_input_channels" in loaded_gen_cfg:
+                print(
+                    f"  Updated num_input_channels (from gen_cfg): {self.num_input_channels}"
+                )
+
+        if self.num_input_channels is None:  # Fallback if not in gen_config
+            if self.k_frames:
+                self.num_input_channels = 4 + (self.k_frames - 1) * 7
+                print(
+                    f"  Derived num_input_channels (fallback): {self.num_input_channels} from k_frames={self.k_frames}"
+                )
+
+            else:
+                # This path should ideally not be hit if k_frames is always set.
+                raise ValueError(
+                    "k_frames is not set, and num_input_channels could not be determined from generation_config.json."
+                )
+        # print(f"Effective num_input_channels for RDN model (after init): {self.num_input_channels}")
+
+    def _load_generation_config(self):
+        if self.generation_config_path and os.path.exists(self.generation_config_path):
+            try:
+                with open(self.generation_config_path, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(
+                    f"Warning: Could not load or parse {self.generation_config_path}: {e}"
+                )
+        return None
 
     def to_dict(self):
-        d = {}
-        for key in dir(self):
-            if not key.startswith("__") and not callable(getattr(self, key)):
-                d[key] = getattr(self, key)
-        return d
+        return {
+            k: v
+            for k, v in self.__dict__.items()
+            if not k.startswith("__") and not callable(v)
+        }
 
     def __str__(self):
-        attrs = {k: v for k, v in vars(self).items() if not k.startswith("_")}
-        return str(attrs)
+        return json.dumps(self.to_dict(), indent=2)
 
 
-def main_train(config: TrainConfig):
-    print(f"Starting RDN Inpainting training with enhanced config:\n{config}")
+def main_train_precomputed(config: PrecomputedTrainConfig):
+    print(
+        f"Starting RDN Inpainting training with PRECOMPUTED data using config:\n{config}"
+    )
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     os.makedirs(config.checkpoint_dir, exist_ok=True)
-
     current_device = torch.device(config.device)
 
-    # Define which keys from config correspond to RDNInpainting constructor arguments
-    rdn_constructor_arg_keys = [
-        "num_input_channels",
-        "num_output_channels",
-        "num_features",
-        "growth_rate",
-        "num_blocks",
-        "num_layers",
-    ]
-    # Prepare model_hyperparams by filtering config, this will be used for model instantiation
-    # and potentially updated from checkpoint
+    # RDN model hyperparams are now primarily set via __init__ from generation_config
+    # or defaults if gen_config is not found/used.
+    # WHEN RESUMING, THESE WILL BE OVERRIDDEN BY CHECKPOINT CONFIG.
     model_hyperparams_for_rdn = {
-        k: getattr(config, k) for k in rdn_constructor_arg_keys
+        "num_input_channels": config.num_input_channels,  # Will be updated if resuming
+        "num_output_channels": config.num_output_channels,
+        "num_features": config.num_features,
+        "growth_rate": config.growth_rate,
+        "num_blocks": config.num_blocks,
+        "num_layers": config.num_layers,
     }
-    # Ensure all required arch keys are present, using config as the source of truth for NEW runs
-    for key in rdn_constructor_arg_keys:
-        if key not in model_hyperparams_for_rdn:
-            # This case should ideally not happen if rdn_constructor_arg_keys and TrainConfig are aligned
-            if hasattr(config, key):
-                model_hyperparams_for_rdn[key] = getattr(config, key)
-            else:
-                raise ValueError(
-                    f"RDN architecture key '{key}' missing in TrainConfig and not set."
-                )
 
     optimizer_state_dict = None
     scheduler_state_dict = None
@@ -154,26 +182,40 @@ def main_train(config: TrainConfig):
         print(f"Resuming training from checkpoint: {config.resume_checkpoint}")
         checkpoint = torch.load(config.resume_checkpoint, map_location=current_device)
 
+        # Config from checkpoint IS THE AUTHORITY for model architecture when resuming.
         loaded_ckpt_config_dict = checkpoint.get("config", {})
         if loaded_ckpt_config_dict:
             print(
-                "\nResuming training. RDN model architecture WILL BE LOADED FROM CHECKPOINT, overriding script defaults."
+                "\nResuming training. RDN model architecture WILL BE LOADED FROM CHECKPOINT, overriding script defaults/generation_config for model setup."
             )
-            # Update model_hyperparams_for_rdn from checkpoint if they exist
-            for key in (
-                model_hyperparams_for_rdn.keys()
-            ):  # Iterate over keys expected by RDN constructor
+
+            # Update model_hyperparams_for_rdn directly from checkpoint's config
+            # These keys define the RDNInpainting architecture
+            arch_keys = [
+                "num_input_channels",
+                "num_output_channels",
+                "num_features",
+                "growth_rate",
+                "num_blocks",
+                "num_layers",
+            ]
+            for key in arch_keys:
                 if key in loaded_ckpt_config_dict:
                     model_hyperparams_for_rdn[key] = loaded_ckpt_config_dict[key]
                     print(
                         f"  Loading from checkpoint for RDN arch: {key} = {model_hyperparams_for_rdn[key]}"
                     )
+                elif key in model_hyperparams_for_rdn:
+                    print(
+                        f"  Using current config for RDN arch (not in ckpt): {key} = {model_hyperparams_for_rdn[key]}"
+                    )
                 else:
                     print(
-                        f"  Using current TrainConfig for RDN arch (not in ckpt): {key} = {model_hyperparams_for_rdn[key]}"
+                        f"  WARNING: RDN arch key '{key}' not in checkpoint config or current model_hyperparams_for_rdn."
                     )
 
-            # Update relevant parts of the main `config` object from checkpoint for dataset compatibility, etc.
+            # Also update relevant parts of the main `config` object from checkpoint for consistency (e.g. for dataset)
+            # K_frames, img_width, img_height are important for dataset compatibility and num_input_channels derivation.
             config.k_frames = loaded_ckpt_config_dict.get("k_frames", config.k_frames)
             config.img_width = loaded_ckpt_config_dict.get(
                 "img_width", config.img_width
@@ -181,10 +223,13 @@ def main_train(config: TrainConfig):
             config.img_height = loaded_ckpt_config_dict.get(
                 "img_height", config.img_height
             )
-            # Ensure num_input_channels in model_hyperparams_for_rdn is consistent with k_frames from checkpoint
-            if "k_frames" in loaded_ckpt_config_dict and model_hyperparams_for_rdn.get(
-                "num_input_channels"
-            ) != (4 + (config.k_frames - 1) * 7):
+            # If num_input_channels was in checkpoint, it's already in model_hyperparams_for_rdn.
+            # If not, and k_frames changed, model_hyperparams_for_rdn['num_input_channels'] might need re-derivation
+            # but it should have been saved. For safety, ensure it's consistent if k_frames was loaded.
+            if (
+                "k_frames" in loaded_ckpt_config_dict
+                and "num_input_channels" not in loaded_ckpt_config_dict
+            ):
                 model_hyperparams_for_rdn["num_input_channels"] = (
                     4 + (config.k_frames - 1) * 7
                 )
@@ -192,16 +237,18 @@ def main_train(config: TrainConfig):
                     f"  Re-derived num_input_channels for RDN arch based on checkpoint k_frames: {model_hyperparams_for_rdn['num_input_channels']}"
                 )
 
-            # Update the main config's num_input_channels as well
+            # Update the main config's num_input_channels as well for full consistency
             if "num_input_channels" in model_hyperparams_for_rdn:
                 config.num_input_channels = model_hyperparams_for_rdn[
                     "num_input_channels"
                 ]
+
             print("--- End of checkpoint config loading ---")
         else:
             print(
                 "WARNING: Checkpoint loaded, but no 'config' dictionary found within. Using script's current config for model architecture."
             )
+            # model_hyperparams_for_rdn remains as initialized from current `config`
 
         model_state_to_load = checkpoint["model_state_dict"]
         optimizer_state_dict = checkpoint.get("optimizer_state_dict")
@@ -210,7 +257,6 @@ def main_train(config: TrainConfig):
         train_loss_history = checkpoint.get("train_loss_history", [])
         val_loss_history = checkpoint.get("val_loss_history", [])
         best_val_loss = checkpoint.get("best_val_loss", float("inf"))
-
         print(
             f"Resuming from epoch {config.start_epoch}. Best val loss so far: {best_val_loss:.4f}"
         )
@@ -219,6 +265,7 @@ def main_train(config: TrainConfig):
         print("Starting new training run.")
 
     model = RDNInpainting(**model_hyperparams_for_rdn).to(current_device)
+    print(f"RDNInpainting model created with params: {model_hyperparams_for_rdn}")
 
     if model_state_to_load:
         new_state_dict = OrderedDict()
@@ -253,26 +300,24 @@ def main_train(config: TrainConfig):
 
     criterion = nn.L1Loss().to(current_device)
 
-    if not config.spynet_m_weights_path or not os.path.exists(
-        config.spynet_m_weights_path
-    ):
+    # --- Datasets and DataLoaders ---
+    try:
+        train_dataset = PrecomputedRDNDataset(
+            data_dir=config.precomputed_train_data_dir
+        )
+    except FileNotFoundError as e:
+        print(f"ERROR: Could not load training data: {e}")
         print(
-            f"ERROR: SPyNetModified weights path invalid: {config.spynet_m_weights_path}"
+            f"Please ensure precomputed training data exists at: {config.precomputed_train_data_dir}"
         )
         return
 
-    train_dataset_config = TrainConfig(**config.to_dict())
-    train_dataset_config.subset_fraction = config.train_subset_fraction
-    train_dataset = InpaintingDataset(
-        config=train_dataset_config,
-        spynet_model_path=config.spynet_m_weights_path,
-        spynet_model_name_for_gt_flow_in_spynet_m=config.spynet_base_model_name,
-        is_train=True,
-        spynet_device=config.spynet_device,
-    )
     if len(train_dataset) == 0:
-        print("ERROR: Training dataset is empty.")
+        print(
+            f"ERROR: Training dataset at {config.precomputed_train_data_dir} is empty."
+        )
         return
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -284,39 +329,47 @@ def main_train(config: TrainConfig):
 
     val_dataloader = None
     if config.validation_enabled:
-        val_dataset_config = TrainConfig(**config.to_dict())
-        val_dataset_config.subset_fraction = config.val_subset_fraction
-        val_dataset = InpaintingDataset(
-            config=val_dataset_config,
-            spynet_model_path=config.spynet_m_weights_path,
-            spynet_model_name_for_gt_flow_in_spynet_m=config.spynet_base_model_name,
-            is_train=False,
-            spynet_device=config.spynet_device,
-        )
-        if len(val_dataset) == 0:
+        if not config.precomputed_val_data_dir:
             print(
-                "WARNING: Validation dataset is empty. Proceeding without validation."
+                "Warning: Validation enabled but precomputed_val_data_dir not set. Disabling validation."
             )
             config.validation_enabled = False
         else:
-            val_dataloader = DataLoader(
-                val_dataset,
-                batch_size=config.batch_size,
-                shuffle=False,
-                num_workers=config.num_workers,
-                pin_memory=(config.device == "cuda"),
-                drop_last=False,
-            )
-            print(
-                f"Training dataset: {len(train_dataset)} samples. Validation dataset: {len(val_dataset)} samples."
-            )
+            try:
+                val_dataset = PrecomputedRDNDataset(
+                    data_dir=config.precomputed_val_data_dir
+                )
+                if len(val_dataset) == 0:
+                    print(
+                        f"WARNING: Validation dataset at {config.precomputed_val_data_dir} is empty. Disabling validation."
+                    )
+                    config.validation_enabled = False
+                else:
+                    val_dataloader = DataLoader(
+                        val_dataset,
+                        batch_size=config.batch_size,
+                        shuffle=False,
+                        num_workers=config.num_workers,
+                        pin_memory=(config.device == "cuda"),
+                        drop_last=False,
+                    )
+            except FileNotFoundError as e:
+                print(
+                    f"WARNING: Could not load validation data: {e}. Disabling validation."
+                )
+                config.validation_enabled = False
+
+    if config.validation_enabled and val_dataloader:
+        print(
+            f"Training dataset: {len(train_dataset)} samples. Validation dataset: {len(val_dataset)} samples."
+        )
     else:
         print(f"Training dataset: {len(train_dataset)} samples. Validation disabled.")
 
+    # --- Training Loop ---
     print(
         f"--- Starting training from epoch {config.start_epoch + 1} for {config.num_epochs} total epochs ---"
     )
-
     for epoch in range(config.start_epoch, config.num_epochs):
         epoch_start_time = time.time()
         model.train()
@@ -349,7 +402,6 @@ def main_train(config: TrainConfig):
         train_loss_history.append({"epoch": epoch + 1, "loss": avg_epoch_train_loss})
 
         avg_epoch_val_loss = -1.0
-
         if config.validation_enabled and val_dataloader:
             model.eval()
             running_val_loss = 0.0
@@ -368,11 +420,9 @@ def main_train(config: TrainConfig):
                     running_val_loss += val_loss.item()
                     val_progress_bar.set_postfix(
                         loss=f"{running_val_loss / (len(val_progress_bar) + 1e-6):.4f}"
-                    )  # Add epsilon to avoid div by zero if val_dataloader is empty somehow
+                    )
 
-            avg_epoch_val_loss = running_val_loss / (
-                len(val_dataloader) + 1e-6
-            )  # Add epsilon here too
+            avg_epoch_val_loss = running_val_loss / (len(val_dataloader) + 1e-6)
             val_loss_history.append({"epoch": epoch + 1, "loss": avg_epoch_val_loss})
 
             if config.lr_scheduler_enabled and scheduler:
@@ -381,9 +431,10 @@ def main_train(config: TrainConfig):
             if avg_epoch_val_loss < best_val_loss:
                 best_val_loss = avg_epoch_val_loss
                 best_model_path = os.path.join(
-                    config.checkpoint_dir, "rdn_inpainting_best.pth"
+                    config.checkpoint_dir, "rdn_precomp_best.pth"
                 )
                 # Create a dictionary representing the config to save
+                # Start with the current script's config, then overwrite with definitive model arch params
                 config_to_save = config.to_dict()
                 config_to_save.update(
                     model_hyperparams_for_rdn
@@ -414,15 +465,16 @@ def main_train(config: TrainConfig):
             if config.validation_enabled and avg_epoch_val_loss != -1.0
             else ""
         )
+        current_lr = optimizer.param_groups[0]["lr"]
         print(
             f"End of Epoch {epoch + 1}. Train Loss: {avg_epoch_train_loss:.4f}. "
-            f"{val_loss_str}Duration: {epoch_duration:.2f}s. LR: {optimizer.param_groups[0]['lr']:.2e}"
+            f"{val_loss_str}Duration: {epoch_duration:.2f}s. LR: {current_lr:.2e}"
         )
 
         if (epoch + 1) % config.save_every_n_epochs == 0 or (
             epoch + 1
         ) == config.num_epochs:
-            chkpt_name = f"rdn_inpainting_epoch{epoch + 1}_{timestamp}.pth"
+            chkpt_name = f"rdn_precomp_epoch{epoch + 1}_{timestamp}.pth"
             checkpoint_path = os.path.join(config.checkpoint_dir, chkpt_name)
 
             # Create a dictionary representing the config to save
@@ -448,26 +500,29 @@ def main_train(config: TrainConfig):
             )
             print(f"Checkpoint saved to {checkpoint_path}")
 
-    print("--- Training finished ---")
+    print("--- Precomputed Training finished ---")
 
+    # --- Plotting Loss ---
     if train_loss_history:
-        train_epochs = [item["epoch"] for item in train_loss_history]
-        train_losses = [item["loss"] for item in train_loss_history]
         plt.figure(figsize=(12, 7))
-        plt.plot(train_epochs, train_losses, label="Training Loss", marker="o")
+        train_epochs = [item["epoch"] for item in train_loss_history]
+        train_losses_vals = [item["loss"] for item in train_loss_history]
+        plt.plot(train_epochs, train_losses_vals, label="Training Loss", marker="o")
 
         if val_loss_history and config.validation_enabled:
             val_epochs = [item["epoch"] for item in val_loss_history]
-            val_losses = [item["loss"] for item in val_loss_history]
-            plt.plot(val_epochs, val_losses, label="Validation Loss", marker="x")
+            val_losses_vals = [item["loss"] for item in val_loss_history]
+            plt.plot(val_epochs, val_losses_vals, label="Validation Loss", marker="x")
 
         plt.xlabel("Epoch")
         plt.ylabel("L1 Loss")
-        plt.title("RDN Inpainting Training & Validation Loss Over Epochs")
+        plt.title("RDN Inpainting (Precomputed Data) - Training & Validation Loss")
         plt.legend()
         plt.grid(True)
         plt.minorticks_on()
-        plot_save_path = os.path.join(config.outputs_dir, f"loss_plot_{timestamp}.png")
+        plot_save_path = os.path.join(
+            config.outputs_dir, f"loss_plot_precomp_{timestamp}.png"
+        )
         try:
             plt.savefig(plot_save_path)
             print(f"Loss plot saved to {plot_save_path}")
@@ -477,31 +532,23 @@ def main_train(config: TrainConfig):
 
 
 if __name__ == "__main__":
-    config = TrainConfig()
+    run_config = PrecomputedTrainConfig()
+    # Example Overrides:
+    # run_config.num_epochs = 3
+    # run_config.batch_size = 2
+    # run_config.precomputed_train_data_dir = "path/to/your/precomputed_train_data"
+    # run_config.precomputed_val_data_dir = "path/to/your/precomputed_val_data"
+    # run_config.generation_config_path = "path/to_your_data/generation_config.json"
 
-    # Example: Override config for a quick test run
-    # config.num_epochs = 3
-    # config.batch_size = 2
-    # config.train_subset_fraction = 0.01
-    # config.val_subset_fraction = 0.01
-    # config.num_features = 4
-    # config.growth_rate = 4
-    # config.num_blocks = 2
-    # config.num_layers = 2
-    # config.save_every_n_epochs = 1
-    # config.validation_enabled = True
-    # config.lr_scheduler_enabled = True
-
-    print("Running in TRAIN mode with enhanced features.")
-    if (
-        not config.spynet_m_weights_path
-        or config.spynet_m_weights_path == "path/to/your/spynet_m_weights.pth"
-        or not os.path.exists(config.spynet_m_weights_path)
-    ):
+    print("Running RDN training with precomputed data.")
+    if not os.path.isdir(run_config.precomputed_train_data_dir):
         print(
-            f"ERROR: config.spynet_m_weights_path ('{config.spynet_m_weights_path}') is required and was not found or is a placeholder."
+            f"ERROR: Precomputed training data directory not found: {run_config.precomputed_train_data_dir}"
+        )
+        print(
+            "Please run the data generation script first or provide the correct path."
         )
         sys.exit(1)
 
-    main_train(config)
-    print("--- main_train(config) completed. --- ")
+    main_train_precomputed(run_config)
+    print("--- main_train_precomputed(run_config) completed. --- ")

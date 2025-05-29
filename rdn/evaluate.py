@@ -42,11 +42,13 @@ DEFAULT_NUM_OUTPUT_CHANNELS = 3
 
 class EvalConfig:
     # Paths
-    checkpoint_path: str = "rdn_inpainting_checkpoints/rdn_inpainting_epoch3_20250528-210618.pth"  # Required
+    checkpoint_path: str = (
+        "rdn_inpainting_outputs_precomputed/checkpoints/rdn_precomp_best.pth"
+    )
     vimeo_dir: str = "data_raw/vimeo_test_clean/sequences"
     defencing_dir: str = "data_raw/De-fencing-master/dataset"
     spynet_m_weights_path: Optional[str] = (
-        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp50_20250528-110600.pth"  # Required for dataset
+        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth"
     )
     spynet_base_model_name: str = "sintel-final"
     spynet_device: str = "cpu"  # New: device for SPyNet in dataset
