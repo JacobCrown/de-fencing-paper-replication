@@ -24,23 +24,19 @@ from spynet.dataset_flow import (
 
 class EvalConfig:
     # --- User MUST update these paths ---
-    MODEL_PATH = (
-        "spynet_checkpoints/spynet_modified_epoch5_20250527-183441.pth"  # UPDATE THIS
-    )
+    MODEL_PATH = "spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth"  # UPDATE THIS
     VIMEO_DIR = "data_raw/vimeo_test_clean"  # UPDATE THIS if different
     DEFENCING_DIR = "data_raw/De-fencing-master/dataset"  # UPDATE THIS if different
     # --- End of paths to update ---
 
     VANILLA_SPYNET_NAME = "sintel-final"  # For GT flow generation in FlowDataset
 
-    BATCH_SIZE = 4
-    NUM_SAMPLES_TO_EVALUATE = (
-        50  # How many samples from dataset to evaluate. Set to None for all.
-    )
+    BATCH_SIZE = 16
+    NUM_SAMPLES_TO_EVALUATE = 100
     NUM_SAMPLES_TO_VISUALIZE = (
         4  # How many samples to include in the output image (must be <= BATCH_SIZE)
     )
-    OUTPUT_IMAGE_PATH = "test/evaluation_spynet_m_visualization.png"
+    OUTPUT_IMAGE_PATH = "test/evaluation_spynet_m_visualization_first.png"
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     NUM_WORKERS = 0  # 0 for main process, helps with debugging on Windows
 
