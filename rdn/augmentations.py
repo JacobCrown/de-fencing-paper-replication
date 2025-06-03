@@ -35,45 +35,91 @@ def augment_fence_for_burst(
     k_frames,
     img_height,
     img_width,
-    perspective_distorter,
 ):
     # fence_img_pil, fence_mask_pil: PIL images for a single fence structure
-    # perspective_distorter: an instance of T.RandomPerspective
     # Returns: list of K pairs: [(F'_1, M'_1_fence), ..., (F'_K, M'_K_fence)], each PIL
 
     augmented_fences = []
+    base_fence_img_pil = fence_img_pil
+    base_fence_mask_pil = fence_mask_pil
 
-    # 1. Base Augmentations (once on the raw fence before K perspectives)
+    # 1. Base Augmentations (once on the raw fence before K transformations)
     if random.random() < 0.5:  # Color jitter
-        fence_img_pil = T.ColorJitter(
+        base_fence_img_pil = T.ColorJitter(
             brightness=0.3, contrast=0.3, saturation=0.2, hue=0.1
-        )(fence_img_pil)
+        )(base_fence_img_pil)
     if random.random() < 0.3:  # Gaussian blur
         kernel_s = random.choice([3, 5])
-        fence_img_pil = TF.gaussian_blur(
-            fence_img_pil,
+        base_fence_img_pil = TF.gaussian_blur(
+            base_fence_img_pil,
             kernel_size=[kernel_s, kernel_s],
             sigma=[random.uniform(0.1, 1.0), random.uniform(0.1, 1.0)],
         )
 
-    # 2. K Random Perspective Distortions
-    for _ in range(k_frames):
-        distorted_fence_img = perspective_distorter(fence_img_pil)
-        distorted_fence_mask = perspective_distorter(fence_mask_pil)
+    # 2. K Random Shifted Crops after initial scaling
+    # Scale the base fence to be larger than the target frame size
+    scale_factor = 1.50  # e.g., 25% larger
+    work_img_h = int(img_height * scale_factor)
+    work_img_w = int(img_width * scale_factor)
 
-        distorted_fence_img_resized = TF.resize(
-            distorted_fence_img,
-            [img_height, img_width],
-            interpolation=T.InterpolationMode.BILINEAR,
+    # Resize the (potentially augmented) base fence and mask
+    # Ensure interpolation methods are appropriate
+    f_work_pil = TF.resize(
+        base_fence_img_pil,
+        [work_img_h, work_img_w],
+        interpolation=T.InterpolationMode.BILINEAR,
+    )
+    m_work_pil = TF.resize(
+        base_fence_mask_pil,
+        [work_img_h, work_img_w],
+        interpolation=T.InterpolationMode.NEAREST,
+    )
+
+    # Calculate maximum possible shift based on size difference
+    # This is half the difference, as shift can be positive or negative
+    max_allowable_shift_x = (work_img_w - img_width) / 2.0
+    max_allowable_shift_y = (work_img_h - img_height) / 2.0
+
+    # User-defined shift range (e.g., up to 20 pixels)
+    user_max_shift_pixels = 20.0
+
+    # Effective shift limit is the minimum of allowable and user-defined
+    actual_max_dx = min(user_max_shift_pixels, max_allowable_shift_x)
+    actual_max_dy = min(user_max_shift_pixels, max_allowable_shift_y)
+
+    if actual_max_dx < 0:
+        actual_max_dx = 0  # Ensure non-negative if work_img_w is smaller (should not happen with scale_factor > 1)
+    if actual_max_dy < 0:
+        actual_max_dy = 0
+
+    for _ in range(k_frames):
+        # Generate small random 2D shift for the current frame
+        delta_x_j = random.uniform(-actual_max_dx, actual_max_dx)
+        delta_y_j = random.uniform(-actual_max_dy, actual_max_dy)
+
+        # Calculate top-left corner for cropping from the work_image
+        # The crop window is of size (img_height, img_width)
+        # Origin for crop is top-left of work_image.
+        # A positive delta_x_j means the content shifts left (crop window moves right on work_image)
+        # A positive delta_y_j means the content shifts up (crop window moves down on work_image)
+        crop_start_x = int(max_allowable_shift_x - delta_x_j)
+        crop_start_y = int(max_allowable_shift_y - delta_y_j)
+
+        # Ensure crop coordinates are within bounds of f_work_pil / m_work_pil
+        # This should be guaranteed if actual_max_dx/dy are calculated correctly
+        # and delta_x_j/delta_y_j are within [-actual_max_d*, actual_max_d*]
+        crop_start_x = max(0, min(crop_start_x, work_img_w - img_width))
+        crop_start_y = max(0, min(crop_start_y, work_img_h - img_height))
+
+        f_prime_pil_j = TF.crop(
+            f_work_pil, crop_start_y, crop_start_x, img_height, img_width
         )
-        distorted_fence_mask_resized = TF.resize(
-            distorted_fence_mask,
-            [img_height, img_width],
-            interpolation=T.InterpolationMode.NEAREST,
+        m_prime_pil_j = TF.crop(
+            m_work_pil, crop_start_y, crop_start_x, img_height, img_width
         )
-        augmented_fences.append(
-            (distorted_fence_img_resized, distorted_fence_mask_resized)
-        )
+
+        augmented_fences.append((f_prime_pil_j, m_prime_pil_j))
+
     return augmented_fences
 
 
@@ -110,7 +156,7 @@ def run_basic_augmentations_test():
             "RGB", (img_w - 50, img_h - 50)
         )  # Smaller to test resizing
         dummy_mask_pil = Image.new("L", (img_w - 50, img_h - 50))
-        perspective_distorter_test = T.RandomPerspective(distortion_scale=0.2, p=1.0)
+        # perspective_distorter_test = T.RandomPerspective(distortion_scale=0.2, p=1.0) # Removed
 
         augmented_fences = augment_fence_for_burst(
             dummy_fence_pil,
@@ -118,7 +164,7 @@ def run_basic_augmentations_test():
             k_frames_test,
             img_h,
             img_w,
-            perspective_distorter_test,
+            # perspective_distorter_test, # Argument removed
         )
         assert len(augmented_fences) == k_frames_test, (
             "Fence augmentation length mismatch"

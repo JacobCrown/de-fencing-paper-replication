@@ -1,4 +1,3 @@
-import argparse
 import os
 import torch
 from torch.utils.data import DataLoader
@@ -11,6 +10,7 @@ from skimage.metrics import structural_similarity as ssim
 import sys
 from typing import Optional, Union
 from collections import OrderedDict  # For loading state_dict
+import datetime
 
 current_dir_rdn_eval = os.path.dirname(os.path.abspath(__file__))
 parent_dir_rdn_eval = os.path.dirname(current_dir_rdn_eval)
@@ -52,7 +52,14 @@ class EvalConfig:
     )
     spynet_base_model_name: str = "sintel-final"
     spynet_device: str = "cpu"  # New: device for SPyNet in dataset
-    eval_outputs_dir: str = "./rdn_evaluation_results"
+
+    # New output structure:
+    base_output_dir: str = "output"  # Base for all outputs
+    module_name: str = "rdn_inpainting"  # Specific module
+    experiment_name: str = "evaluation"  # Specific experiment/run type
+    # eval_outputs_dir will be dynamically constructed
+    # Example: output/rdn_inpainting/evaluation/[timestamp_or_id]/evaluations/
+    # Example: output/rdn_inpainting/evaluation/[timestamp_or_id]/visualizations/
 
     # Model Architecture (DEFAULTS - checkpoint values will override these for model instantiation)
     num_features: int = 64
@@ -66,7 +73,7 @@ class EvalConfig:
     # Evaluation parameters
     eval_batch_size: int = 4
     eval_subset_fraction: Optional[float] = None
-    eval_num_samples: Optional[int] = 20
+    eval_num_samples: Optional[int] = 100
     save_eval_images: bool = True
 
     # Image/Patch size (DEFAULTS - checkpoint values will override)
@@ -78,15 +85,30 @@ class EvalConfig:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     run_mode: str = "eval"  # "eval" or "test"
     num_input_channels: Optional[int] = None
+    run_timestamp: str  # To be set at runtime
 
     # Attributes for InpaintingDataset compatibility regarding subsetting
     subset_fraction: Optional[float] = None
     num_samples: Optional[int] = None
 
     def __init__(self, **kwargs):
+        self.run_timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        # Initialize all attributes to their class-defined defaults first
+        class_attrs = {
+            attr_name: getattr(EvalConfig, attr_name)
+            for attr_name in dir(EvalConfig)
+            if not attr_name.startswith("__")
+            and not callable(getattr(EvalConfig, attr_name))
+            and attr_name not in ["run_timestamp"]
+        }
+        for key, value in class_attrs.items():
+            setattr(self, key, value)
+
+        # Then override with any provided kwargs
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+
         if self.num_input_channels is None and self.k_frames is not None:
             self.num_input_channels = 4 + (self.k_frames - 1) * 7
 
@@ -98,6 +120,21 @@ class EvalConfig:
 def evaluate_model(eval_config_obj: EvalConfig):
     print(f"Starting RDN Inpainting evaluation with EvalConfig:\n{eval_config_obj}")
     current_device = torch.device(eval_config_obj.device)
+
+    # Setup output directories
+    run_specific_output_dir = os.path.join(
+        eval_config_obj.base_output_dir,
+        eval_config_obj.module_name,
+        eval_config_obj.experiment_name,
+        eval_config_obj.run_timestamp,
+    )
+    evaluations_subdir = os.path.join(run_specific_output_dir, "evaluations")
+    visualizations_subdir = os.path.join(run_specific_output_dir, "visualizations")
+    os.makedirs(evaluations_subdir, exist_ok=True)
+    os.makedirs(visualizations_subdir, exist_ok=True)
+    print(
+        f"Evaluation outputs (metrics, images) will be saved in: {run_specific_output_dir}"
+    )
 
     if not eval_config_obj.checkpoint_path or not os.path.exists(
         eval_config_obj.checkpoint_path
@@ -301,17 +338,17 @@ def evaluate_model(eval_config_obj: EvalConfig):
                 if (
                     eval_config_obj.save_eval_images and batch_idx == 0 and i < 2
                 ):  # Save first few of first batch
-                    os.makedirs(eval_config_obj.eval_outputs_dir, exist_ok=True)
+                    # os.makedirs(eval_config_obj.eval_outputs_dir, exist_ok=True) # Already created above
                     save_pred_path = os.path.join(
-                        eval_config_obj.eval_outputs_dir,
+                        visualizations_subdir,  # Use new path
                         f"pred_batch{batch_idx}_img{i}.png",
                     )
                     save_gt_path = os.path.join(
-                        eval_config_obj.eval_outputs_dir,
+                        visualizations_subdir,  # Use new path
                         f"gt_batch{batch_idx}_img{i}.png",
                     )
                     save_masked_path = os.path.join(
-                        eval_config_obj.eval_outputs_dir,
+                        visualizations_subdir,  # Use new path
                         f"masked_input_batch{batch_idx}_img{i}.png",
                     )
 
@@ -327,7 +364,9 @@ def evaluate_model(eval_config_obj: EvalConfig):
                     Image.fromarray((i_k_m_img_np * 255).astype(np.uint8)).save(
                         save_masked_path
                     )
-                    print(f"Saved example images to {eval_config_obj.eval_outputs_dir}")
+                    print(
+                        f"Saved example images to {visualizations_subdir}"
+                    )  # Log new path
 
     if num_images_processed > 0:
         avg_psnr = total_psnr / num_images_processed
@@ -339,16 +378,29 @@ def evaluate_model(eval_config_obj: EvalConfig):
         print(f"\n--- Evaluation Metrics ({num_images_processed} images) ---")
         print(f"Average PSNR: {avg_psnr:.4f} dB")
         print(f"Average SSIM: {avg_ssim:.4f}")
+
+        # Save metrics to a file
+        metrics_file_path = os.path.join(evaluations_subdir, "evaluation_metrics.txt")
+        with open(metrics_file_path, "w") as f_metrics:
+            f_metrics.write(
+                f"Evaluation Metrics for run: {eval_config_obj.run_timestamp}\n"
+            )
+            f_metrics.write(f"Checkpoint used: {eval_config_obj.checkpoint_path}\n")
+            f_metrics.write(f"Number of images processed: {num_images_processed}\n")
+            f_metrics.write(f"Average PSNR: {avg_psnr:.4f} dB\n")
+            f_metrics.write(f"Average SSIM: {avg_ssim:.4f}\n")
+        print(f"Evaluation metrics saved to {metrics_file_path}")
     else:
         print("No images were processed for metrics.")
     print("--- Evaluation finished ---")
 
 
 if __name__ == "__main__":
-    config = EvalConfig()
-
     # Create a new EvalConfig instance for the run to avoid modifying the global default 'config'
     run_config = EvalConfig()
+    run_config.run_mode = (
+        "eval"  # Ensure this is set if there was a global 'config' object previously
+    )
 
     print("Running in EVALUATION mode.")
     if (
@@ -370,6 +422,7 @@ if __name__ == "__main__":
             f"ERROR: run_config.spynet_m_weights_path ('{run_config.spynet_m_weights_path}') must be set to valid SPyNet weights for the dataset."
         )
         sys.exit(1)
-    os.makedirs(run_config.eval_outputs_dir, exist_ok=True)
+    # Output directory creation is now handled inside evaluate_model
+    # os.makedirs(run_config.eval_outputs_dir, exist_ok=True)
     evaluate_model(run_config)
     print("--- evaluate_model(run_config) completed. --- ")

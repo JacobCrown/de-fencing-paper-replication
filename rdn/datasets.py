@@ -184,7 +184,6 @@ class InpaintingDataset(Dataset):
             self.spynet_m_is_compiled_and_cuda = False
 
         self.to_tensor = T.ToTensor()
-        self.perspective_distorter = T.RandomPerspective(distortion_scale=0.3, p=1.0)
 
     def _load_vimeo_sequences(self):
         # Assumes vimeo_dir is the root of vimeo_septuplet (contains sep_testlist.txt etc.)
@@ -331,7 +330,6 @@ class InpaintingDataset(Dataset):
                 self.k_frames,
                 self.img_height,
                 self.img_width,
-                self.perspective_distorter,
             )
         else:  # If no fences (e.g. evaluation on clean data or if fence loading failed for non-train)
             # Create dummy/empty fence structures if necessary for pipeline consistency

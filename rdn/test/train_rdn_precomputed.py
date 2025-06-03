@@ -32,11 +32,13 @@ class PrecomputedTrainConfig:
     # Paths
     precomputed_train_data_dir: str = "data_precomputed/rdn_data/train"
     precomputed_val_data_dir: Optional[str] = "data_precomputed/rdn_data/val"
-    outputs_dir: str = "./rdn_inpainting_outputs_precomputed"
-    checkpoint_dir: str = os.path.join(outputs_dir, "checkpoints")
+    # New output structure:
+    base_output_dir: str = "output"  # Base for all outputs
+    module_name: str = "rdn_inpainting"  # Specific module
+    experiment_name: str = "training_precomputed"  # Specific experiment/run type
+    # outputs_dir will be dynamically constructed: output/rdn_inpainting/training_precomputed/[timestamp_or_id]
+    # checkpoint_dir will be [outputs_dir]/checkpoints
     resume_checkpoint: Optional[str] = None
-    # Path to the generation_config.json used to create the precomputed data
-    # This helps ensure model architecture matches the data.
     generation_config_path: Optional[str] = (
         "data_precomputed/rdn_data/generation_config.json"
     )
@@ -79,11 +81,30 @@ class PrecomputedTrainConfig:
         0  # For precomputed data, 0 might be fine or even preferred initially
     )
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    run_timestamp: str  # To be set at runtime for unique output directory
 
     def __init__(self, **kwargs):
+        self.run_timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        # Initialize all attributes to their class-defined defaults first
+        class_attrs = {
+            attr_name: getattr(PrecomputedTrainConfig, attr_name)
+            for attr_name in dir(PrecomputedTrainConfig)
+            if not attr_name.startswith("__")
+            and not callable(getattr(PrecomputedTrainConfig, attr_name))
+            and attr_name
+            not in [
+                "run_timestamp"
+            ]  # Exclude runtime-set attribute from this default step
+        }
+        for key, value in class_attrs.items():
+            setattr(self, key, value)
+
+        # Then override with any provided kwargs
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        # else:
+        #     print(f"Warning: PrecomputedTrainConfig received unexpected kwarg '{key}'.")
 
         # This section attempts to load generation_config.
         # It's useful for NEW runs to match data.
@@ -156,8 +177,53 @@ def main_train_precomputed(config: PrecomputedTrainConfig):
         f"Starting RDN Inpainting training with PRECOMPUTED data using config:\n{config}"
     )
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    os.makedirs(config.checkpoint_dir, exist_ok=True)
+    # Construct dynamic output paths using the timestamp from the config object
+    # This ensures that even if main_train_precomputed is called multiple times with the same base config,
+    # each run gets a unique folder if a new config object is instantiated each time.
+    # If resuming, the config.run_timestamp might be from the old run if not careful,
+    # but checkpoint naming below uses a new timestamp for the checkpoint file itself.
+    # For the directory, it's better to use the one from the initial run if resuming from a specific path.
+    # However, if config.resume_checkpoint is None, then this is a new run.
+
+    # Determine outputs_dir based on whether it's a new run or a resumed one
+    if config.resume_checkpoint and os.path.exists(config.resume_checkpoint):
+        # If resuming, try to infer outputs_dir from checkpoint path to keep logs together.
+        # Checkpoint path likely is: base_output_dir/module/experiment/run_id/checkpoints/file.pth
+        # So, outputs_dir would be base_output_dir/module/experiment/run_id
+        # This is a bit heuristic; a more robust way is to save outputs_dir in checkpoint.
+        # For now, let's assume if resuming, user wants to continue in that experiment's folder.
+        # The `config` object would have been potentially updated by checkpoint's config values,
+        # but not necessarily its `run_timestamp` or path structure if not saved explicitly.
+
+        # Simplification: if resuming, assume the checkpoint path implies the experiment folder structure.
+        # We will save new checkpoints and plots in the *same* experiment folder.
+        # The specific `outputs_dir` for this run will be derived from the checkpoint's parent structure.
+        # Example: output/rdn_inpainting/training_precomputed/20230101-120000/checkpoints/best.pth
+        # -> outputs_dir = output/rdn_inpainting/training_precomputed/20230101-120000
+        outputs_dir_for_run = os.path.dirname(os.path.dirname(config.resume_checkpoint))
+        # And update config.run_timestamp to match the resumed folder if possible for consistency
+        # config.run_timestamp = os.path.basename(outputs_dir_for_run) # This would be the ID part
+        # The above line is tricky if outputs_dir_for_run isn't just a timestamp. Safer to just use outputs_dir_for_run.
+    else:
+        # New run, create unique directory
+        outputs_dir_for_run = os.path.join(
+            config.base_output_dir,
+            config.module_name,
+            config.experiment_name,
+            config.run_timestamp,
+        )
+
+    checkpoint_dir_for_run = os.path.join(outputs_dir_for_run, "checkpoints")
+    visualizations_dir_for_run = os.path.join(outputs_dir_for_run, "visualizations")
+    logs_dir_for_run = os.path.join(
+        outputs_dir_for_run, "logs"
+    )  # For future TensorBoard etc.
+
+    os.makedirs(checkpoint_dir_for_run, exist_ok=True)
+    os.makedirs(visualizations_dir_for_run, exist_ok=True)
+    os.makedirs(logs_dir_for_run, exist_ok=True)
+    print(f"Outputs for this run will be saved in: {outputs_dir_for_run}")
+
     current_device = torch.device(config.device)
 
     # RDN model hyperparams are now primarily set via __init__ from generation_config
@@ -431,7 +497,7 @@ def main_train_precomputed(config: PrecomputedTrainConfig):
             if avg_epoch_val_loss < best_val_loss:
                 best_val_loss = avg_epoch_val_loss
                 best_model_path = os.path.join(
-                    config.checkpoint_dir, "rdn_precomp_best.pth"
+                    checkpoint_dir_for_run, "rdn_precomp_best.pth"
                 )
                 # Create a dictionary representing the config to save
                 # Start with the current script's config, then overwrite with definitive model arch params
@@ -474,8 +540,11 @@ def main_train_precomputed(config: PrecomputedTrainConfig):
         if (epoch + 1) % config.save_every_n_epochs == 0 or (
             epoch + 1
         ) == config.num_epochs:
-            chkpt_name = f"rdn_precomp_epoch{epoch + 1}_{timestamp}.pth"
-            checkpoint_path = os.path.join(config.checkpoint_dir, chkpt_name)
+            # Use a consistent timestamp for the checkpoint file name within this run
+            # The config.run_timestamp identifies the folder for this run.
+            # The checkpoint file itself can use a simpler epoch marker.
+            chkpt_name = f"rdn_precomp_epoch{epoch + 1}.pth"
+            checkpoint_path = os.path.join(checkpoint_dir_for_run, chkpt_name)
 
             # Create a dictionary representing the config to save
             config_to_save_epoch = config.to_dict()
@@ -521,7 +590,7 @@ def main_train_precomputed(config: PrecomputedTrainConfig):
         plt.grid(True)
         plt.minorticks_on()
         plot_save_path = os.path.join(
-            config.outputs_dir, f"loss_plot_precomp_{timestamp}.png"
+            visualizations_dir_for_run, f"loss_plot_precomp_{config.run_timestamp}.png"
         )
         try:
             plt.savefig(plot_save_path)
@@ -539,6 +608,7 @@ if __name__ == "__main__":
     # run_config.precomputed_train_data_dir = "path/to/your/precomputed_train_data"
     # run_config.precomputed_val_data_dir = "path/to/your/precomputed_val_data"
     # run_config.generation_config_path = "path/to_your_data/generation_config.json"
+    # run_config.resume_checkpoint = "output/rdn_inpainting/training_precomputed/YOUR_RUN_ID/checkpoints/your_checkpoint.pth"
 
     print("Running RDN training with precomputed data.")
     if not os.path.isdir(run_config.precomputed_train_data_dir):
