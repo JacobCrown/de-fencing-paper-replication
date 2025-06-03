@@ -42,14 +42,13 @@ class GenerationConfig:
     )
 
     # Generation parameters
-    num_train_samples: int = 30
-    num_val_samples: int = 10
-    num_test_samples: int = 10
+    num_train_samples: int = 100
+    num_val_samples: int = 20
+    num_test_samples: int = 20
     k_frames: int = 5
     img_width: int = 320
     img_height: int = 192
     spynet_base_model_name: str = "sintel-final"
-    spynet_compile_mode: str = "max-autotune"  # or None, or "reduce-overhead"
 
     # Data splitting parameters (Vimeo)
     # Option 1: Specify ratios (test_split_ratio is derived: 1 - train - val)
@@ -149,21 +148,6 @@ def load_spynet(
     spynet_m.eval()
     print(f"SPyNetModified loaded to {target_device}.")
 
-    if (
-        config.spynet_compile_mode
-        and target_device.type == "cuda"
-        and hasattr(torch, "compile")
-    ):
-        print(
-            f"Attempting to torch.compile SPyNetModified with mode: {config.spynet_compile_mode}"
-        )
-        try:
-            spynet_m = torch.compile(spynet_m, mode=config.spynet_compile_mode)
-            print("SPyNetModified compiled successfully.")
-        except Exception as e_compile:
-            print(
-                f"WARNING: SPyNetModified compilation failed: {e_compile}. Using uncompiled model."
-            )
     return spynet_m
 
 
@@ -224,12 +208,6 @@ def generate_single_sample(
     I_k_m_tensor = I_k_tensor.to(spynet_device) * (1 - S_k_tensor.to(spynet_device))
     all_features_for_f_in = [I_k_m_tensor, S_k_tensor.to(spynet_device)]
 
-    spynet_m_is_compiled_and_cuda = (
-        hasattr(spynet_m, "_is_compiled")
-        and spynet_m._is_compiled
-        and spynet_device.type == "cuda"
-    )
-
     for j in range(config.k_frames):
         if j == keyframe_idx_in_burst:
             continue
@@ -246,9 +224,6 @@ def generate_single_sample(
             f_kj_m_tensor = spynet_m(
                 input_k_rgbm.unsqueeze(0), input_j_rgbm.unsqueeze(0)
             ).squeeze(0)
-
-        if spynet_m_is_compiled_and_cuda:
-            f_kj_m_tensor = f_kj_m_tensor.clone()  # Handle potential CUDAGraphs issue
 
         I_j_m_content_to_warp = I_j_current_tensor * (1 - S_j_current_tensor)
 

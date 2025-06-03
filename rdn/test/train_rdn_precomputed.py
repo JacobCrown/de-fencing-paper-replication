@@ -38,17 +38,19 @@ class PrecomputedTrainConfig:
     experiment_name: str = "training_precomputed"  # Specific experiment/run type
     # outputs_dir will be dynamically constructed: output/rdn_inpainting/training_precomputed/[timestamp_or_id]
     # checkpoint_dir will be [outputs_dir]/checkpoints
-    resume_checkpoint: Optional[str] = None
+    resume_checkpoint: Optional[str] = (
+        "output/rdn_inpainting/training_precomputed/20250603-192855/checkpoints/rdn_precomp_epoch10.pth"
+    )
     generation_config_path: Optional[str] = (
         "data_precomputed/rdn_data/generation_config.json"
     )
 
     # RDN Architecture (will be overridden by generation_config if provided and valid)
     # These are placeholders; ideally, they match what was used for data generation.
-    num_features: int = 8
-    growth_rate: int = 8
-    num_blocks: int = 4
-    num_layers: int = 4
+    num_features: int = 2
+    growth_rate: int = 2
+    num_blocks: int = 2
+    num_layers: int = 2
     k_frames: int = 5  # Should match data generation
     num_output_channels: int = 3  # Typically 3 for RGB
     num_input_channels: Optional[int] = None  # Derived from k_frames or gen_config
@@ -61,12 +63,12 @@ class PrecomputedTrainConfig:
     beta1: float = 0.9
     beta2: float = 0.999
     epsilon: float = 1e-8
-    num_epochs: int = 200
-    batch_size: int = 32
+    num_epochs: int = 50
+    batch_size: int = 16
     start_epoch: int = 0
 
     # Checkpointing & Saving
-    save_every_n_epochs: int = 10
+    save_every_n_epochs: int = 1
     save_best_model_only_on_val: bool = True
 
     # Enhancements (subset fractions are not used as dataset size is fixed by precomputation)

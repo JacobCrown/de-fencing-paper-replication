@@ -341,8 +341,8 @@ if __name__ == "__main__":
     viz_config = VisualizeConfig(
         vimeo_dir="data_raw/vimeo_test_clean/sequences",
         defencing_dir="data_raw/De-fencing-master/dataset",
-        spynet_m_weights_path="spynet_checkpoints/spynet_modified_ddp_epoch_ddp50_20250528-110600.pth",
-        num_bursts_to_visualize=3,
+        spynet_m_weights_path="spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth",
+        num_bursts_to_visualize=5,
         img_width=320,  # Example: Make sure these match your data/expectations
         img_height=192,  # Example
         k_frames=5,  # Example
@@ -352,45 +352,4 @@ if __name__ == "__main__":
         # device will use its default "cpu"
     )
 
-    if not OPENCV_AVAILABLE:
-        print(
-            "\n********************************************************************************"
-        )
-        print(
-            "WARNING: OpenCV (cv2) is not installed. Optical flow will be visualized "
-        )
-        print(
-            "         as separate U and V channels instead of a combined color image."
-        )
-        print("         To get color-coded flow images, please install OpenCV:")
-        print("         pip install opencv-python")
-        print(
-            "********************************************************************************\n"
-        )
-
-    if (
-        not viz_config.spynet_m_weights_path
-        or viz_config.spynet_m_weights_path
-        == "path/to/your/spynet_m_weights.pth"  # Check against placeholder
-        or not os.path.exists(viz_config.spynet_m_weights_path)
-    ):
-        print(
-            "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        )
-        print(
-            "!!! CRITICAL: `spynet_m_weights_path` in VisualizeConfig is not set      !!!"
-        )
-        print(
-            "!!! to a valid path or the file does not exist.                        !!!"
-        )
-        print(
-            f"!!! Current path: {viz_config.spynet_m_weights_path}                      !!!"
-        )
-        print(
-            "!!! Please update it in the script (near __main__) for the script to run.!!!"
-        )
-        print(
-            "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        )
-    else:
-        visualize_bursts(viz_config)
+    visualize_bursts(viz_config)

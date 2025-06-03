@@ -303,6 +303,18 @@ def visualize_precomputed_samples(config: VisualizePrecomputedConfig):
 
             # f_kj^m (flow from keyframe to non-keyframe, 2 channels)
             flow_f = f_in_tensor[current_channel_idx : current_channel_idx + 2, :, :]
+
+            # Print numerical statistics of the flow tensor
+            print(
+                f"    Sample {i + 1}, Non-keyframe {nf_idx}: Flow Tensor (f_kj^m) Statistics:"
+            )
+            print(
+                f"      U-channel (shape {flow_f[0].shape}): min={flow_f[0].min():.4f}, max={flow_f[0].max():.4f}, mean={flow_f[0].mean():.4f}, std={flow_f[0].std():.4f}"
+            )
+            print(
+                f"      V-channel (shape {flow_f[1].shape}): min={flow_f[1].min():.4f}, max={flow_f[1].max():.4f}, mean={flow_f[1].mean():.4f}, std={flow_f[1].std():.4f}"
+            )
+
             images_to_display.append(flow_to_rgb(flow_f))
             current_channel_idx += 2
 
@@ -355,9 +367,9 @@ if __name__ == "__main__":
     # --- Configuration for the visualization ---
     # Ensure these paths are correct for your setup
     vis_config = VisualizePrecomputedConfig(
-        precomputed_data_dir="data_precomputed/rdn_data/train",  # Or your train data
+        precomputed_data_dir="data_precomputed/rdn_data/val",  # Or your train data
         generation_config_path="data_precomputed/rdn_data/generation_config.json",
-        num_samples_to_visualize=6,
+        num_samples_to_visualize=10,
         # output_viz_dir is now constructed internally based on base_output_dir etc.
         # Example: Override base_output_dir if needed:
         # base_output_dir="my_custom_outputs"

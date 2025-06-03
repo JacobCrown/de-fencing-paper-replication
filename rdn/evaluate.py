@@ -18,14 +18,15 @@ if parent_dir_rdn_eval not in sys.path:
     sys.path.append(parent_dir_rdn_eval)
 
 from rdn.models import RDNInpainting
-from rdn.datasets import (
-    InpaintingDataset,
-)  # Assuming same dataset can be used for eval with is_train=False
+from rdn.test.precomputed_rdn_dataset import (
+    PrecomputedRDNDataset,
+)  # Import for precomputed data
 
-try:
-    from spynet.spynet_modified import SPyNetModified  # For dummy spynet in test
-except ImportError:
-    SPyNetModified = None
+# SPyNetModified import is not needed if we are using precomputed f_in
+# try:
+#     from spynet.spynet_modified import SPyNetModified
+# except ImportError:
+#     SPyNetModified = None
 
 # --- Default Configuration (should match training or be set as needed for eval) ---
 DEFAULT_K_FRAMES = 5
@@ -42,54 +43,45 @@ DEFAULT_NUM_OUTPUT_CHANNELS = 3
 
 class EvalConfig:
     # Paths
-    checkpoint_path: str = (
-        "rdn_inpainting_outputs_precomputed/checkpoints/rdn_precomp_best.pth"
+    checkpoint_path: str = "output/rdn_inpainting/training_precomputed/20250603-192855/checkpoints/rdn_precomp_best.pth"  # Path to the RDN model to evaluate
+    precomputed_test_data_dir: str = (
+        "data_precomputed/rdn_data/test"  # Path to precomputed test data
     )
-    vimeo_dir: str = "data_raw/vimeo_test_clean/sequences"
-    defencing_dir: str = "data_raw/De-fencing-master/dataset"
-    spynet_m_weights_path: Optional[str] = (
-        "spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth"
-    )
-    spynet_base_model_name: str = "sintel-final"
-    spynet_device: str = "cpu"  # New: device for SPyNet in dataset
 
     # New output structure:
-    base_output_dir: str = "output"  # Base for all outputs
-    module_name: str = "rdn_inpainting"  # Specific module
-    experiment_name: str = "evaluation"  # Specific experiment/run type
+    base_output_dir: str = "output"
+    module_name: str = "rdn_inpainting"
+    experiment_name: str = "evaluation_precomputed"  # Changed experiment name
     # eval_outputs_dir will be dynamically constructed
-    # Example: output/rdn_inpainting/evaluation/[timestamp_or_id]/evaluations/
-    # Example: output/rdn_inpainting/evaluation/[timestamp_or_id]/visualizations/
 
     # Model Architecture (DEFAULTS - checkpoint values will override these for model instantiation)
-    num_features: int = 64
-    growth_rate: int = 64
-    num_blocks: int = 16
-    num_layers: int = 8
-    k_frames: int = 5
-    # num_input_channels will be derived or from checkpoint
-    num_output_channels: int = 3  # Usually fixed for RGB
+    num_features: int = DEFAULT_NUM_FEATURES
+    growth_rate: int = DEFAULT_GROWTH_RATE
+    num_blocks: int = DEFAULT_NUM_BLOCKS
+    num_layers: int = DEFAULT_NUM_LAYERS
+    k_frames: int = DEFAULT_K_FRAMES  # Important for num_input_channels derivation if not in checkpoint
+    num_output_channels: int = DEFAULT_NUM_OUTPUT_CHANNELS
 
     # Evaluation parameters
     eval_batch_size: int = 4
-    eval_subset_fraction: Optional[float] = None
-    eval_num_samples: Optional[int] = 100
+    # eval_subset_fraction: Optional[float] = None # Subset logic might not apply directly to PrecomputedRDNDataset
+    # eval_num_samples: Optional[int] = 100 # PrecomputedRDNDataset loads all samples in dir
     save_eval_images: bool = True
 
     # Image/Patch size (DEFAULTS - checkpoint values will override)
-    img_width: int = 320
-    img_height: int = 192
+    img_width: int = DEFAULT_IMG_WIDTH
+    img_height: int = DEFAULT_IMG_HEIGHT
 
     # Misc
     num_workers: int = 0
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    run_mode: str = "eval"  # "eval" or "test"
+    run_mode: str = "eval"
     num_input_channels: Optional[int] = None
-    run_timestamp: str  # To be set at runtime
+    run_timestamp: str
 
-    # Attributes for InpaintingDataset compatibility regarding subsetting
-    subset_fraction: Optional[float] = None
-    num_samples: Optional[int] = None
+    # Attributes for InpaintingDataset compatibility regarding subsetting (Not used by PrecomputedRDNDataset)
+    # subset_fraction: Optional[float] = None
+    # num_samples: Optional[int] = None
 
     def __init__(self, **kwargs):
         self.run_timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -139,13 +131,8 @@ def evaluate_model(eval_config_obj: EvalConfig):
     if not eval_config_obj.checkpoint_path or not os.path.exists(
         eval_config_obj.checkpoint_path
     ):
-        print(f"ERROR: Eval checkpoint path invalid: {eval_config_obj.checkpoint_path}")
-        return
-    if not eval_config_obj.spynet_m_weights_path or not os.path.exists(
-        eval_config_obj.spynet_m_weights_path
-    ):
         print(
-            f"ERROR: SPyNetModified weights for dataset invalid or not provided: {eval_config_obj.spynet_m_weights_path}"
+            f"ERROR: Eval RDN checkpoint path invalid: {eval_config_obj.checkpoint_path}"
         )
         return
 
@@ -161,9 +148,9 @@ def evaluate_model(eval_config_obj: EvalConfig):
         "num_layers": eval_config_obj.num_layers,
         "k_frames": eval_config_obj.k_frames,
         "num_output_channels": eval_config_obj.num_output_channels,
-        "img_width": eval_config_obj.img_width,
-        "img_height": eval_config_obj.img_height,
-        "num_input_channels": eval_config_obj.num_input_channels,
+        "img_width": eval_config_obj.img_width,  # For consistency, though RDN might not use these directly
+        "img_height": eval_config_obj.img_height,  # For consistency
+        "num_input_channels": eval_config_obj.num_input_channels,  # Crucial
     }
 
     if "config" in checkpoint:
@@ -231,27 +218,34 @@ def evaluate_model(eval_config_obj: EvalConfig):
     model.eval()
     print("Model loaded and in evaluation mode.")
 
+    # Update eval_config_obj with actual model parameters from checkpoint for consistency
+    # This is important for logging and if any subsequent logic depends on these.
     eval_config_obj.img_width = model_hyperparams["img_width"]
     eval_config_obj.img_height = model_hyperparams["img_height"]
     eval_config_obj.k_frames = model_hyperparams["k_frames"]
     eval_config_obj.num_input_channels = model_hyperparams["num_input_channels"]
+    eval_config_obj.num_features = model_hyperparams["num_features"]
+    eval_config_obj.growth_rate = model_hyperparams["growth_rate"]
+    eval_config_obj.num_blocks = model_hyperparams["num_blocks"]
+    eval_config_obj.num_layers = model_hyperparams["num_layers"]
 
-    print("\nPreparing InpaintingDataset for evaluation using resolved config...")
+    print("\nPreparing PrecomputedRDNDataset for evaluation...")
 
-    # Align subset config names for InpaintingDataset
-    # by copying eval-specific names to the generic names expected by InpaintingDataset
-    eval_config_obj.subset_fraction = eval_config_obj.eval_subset_fraction
-    eval_config_obj.num_samples = eval_config_obj.eval_num_samples
+    try:
+        eval_dataset = PrecomputedRDNDataset(
+            data_dir=eval_config_obj.precomputed_test_data_dir
+        )
+    except FileNotFoundError as e:
+        print(f"ERROR: Could not load precomputed test data: {e}")
+        print(
+            f"Please ensure precomputed test data exists at: {eval_config_obj.precomputed_test_data_dir}"
+        )
+        return
 
-    eval_dataset = InpaintingDataset(
-        config=eval_config_obj,
-        spynet_model_path=eval_config_obj.spynet_m_weights_path,
-        spynet_model_name_for_gt_flow_in_spynet_m=eval_config_obj.spynet_base_model_name,
-        is_train=False,
-        spynet_device=eval_config_obj.spynet_device,
-    )
     if len(eval_dataset) == 0:
-        print("ERROR: Eval dataset empty.")
+        print(
+            f"ERROR: Precomputed test dataset at {eval_config_obj.precomputed_test_data_dir} is empty."
+        )
         return
 
     eval_dataloader = DataLoader(
@@ -265,11 +259,6 @@ def evaluate_model(eval_config_obj: EvalConfig):
     print(
         f"Eval dataset loaded: {len(eval_dataset)} samples, {len(eval_dataloader)} batches."
     )
-
-    # It's good practice to nullify these if they were only for the dataset init,
-    # though not strictly necessary here as they are not used further down.
-    # eval_config_obj.subset_fraction = None
-    # eval_config_obj.num_samples = None
 
     print("--- Starting evaluation ---")
     total_psnr, total_ssim, num_images_processed = 0.0, 0.0, 0
@@ -410,16 +399,6 @@ if __name__ == "__main__":
     ):
         print(
             f"ERROR: run_config.checkpoint_path ('{run_config.checkpoint_path}') must be set to a valid model checkpoint for evaluation."
-        )
-        sys.exit(1)
-    if (
-        not run_config.spynet_m_weights_path
-        or run_config.spynet_m_weights_path
-        == "path/to/your/spynet_m_weights.pth"  # Default placeholder
-        or not os.path.exists(run_config.spynet_m_weights_path)
-    ):
-        print(
-            f"ERROR: run_config.spynet_m_weights_path ('{run_config.spynet_m_weights_path}') must be set to valid SPyNet weights for the dataset."
         )
         sys.exit(1)
     # Output directory creation is now handled inside evaluate_model

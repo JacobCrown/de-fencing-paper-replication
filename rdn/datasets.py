@@ -110,79 +110,6 @@ class InpaintingDataset(Dataset):
 
         self.spynet_m.eval()
 
-        # Attempt to compile SPyNet-M for potential speedup
-        if hasattr(torch, "compile") and self.spynet_target_device.type == "cuda":
-            original_spynet_m_for_fallback = self.spynet_m  # Store original model
-            compile_mode = "max-autotune"
-            is_compiled = False
-            try:
-                print(
-                    f"Attempting to torch.compile SPyNetModified on {self.spynet_target_device} with mode '{compile_mode}'..."
-                )
-                pt_version = torch.__version__
-                major_version = int(pt_version.split(".")[0])
-
-                if major_version >= 2:
-                    compiled_model_candidate = torch.compile(
-                        original_spynet_m_for_fallback, mode=compile_mode
-                    )
-                    print(
-                        f"SPyNetModified compilation call successful on {self.spynet_target_device} with mode '{compile_mode}'. Testing with a dummy forward pass..."
-                    )
-
-                    # Determine appropriate dummy input size based on config, ensuring divisibility by 32 for pyramid
-                    h_config = self.config.img_height
-                    w_config = self.config.img_width
-
-                    # Ensure dimensions are at least 32 and multiples of 32 for robust SPyNet pyramid processing
-                    dummy_h = max(
-                        32, (h_config + 31) // 32 * 32 if h_config > 0 else 32
-                    )
-                    dummy_w = max(
-                        32, (w_config + 31) // 32 * 32 if w_config > 0 else 32
-                    )
-
-                    dummy_input1 = torch.randn(
-                        1, 4, dummy_h, dummy_w, device=self.spynet_target_device
-                    )
-                    dummy_input2 = torch.randn(
-                        1, 4, dummy_h, dummy_w, device=self.spynet_target_device
-                    )
-
-                    with torch.inference_mode():
-                        _ = compiled_model_candidate(dummy_input1, dummy_input2)
-
-                    self.spynet_m = compiled_model_candidate  # Assign successfully tested compiled model
-                    is_compiled = True
-                    print(
-                        f"Dummy forward pass successful. Using compiled SPyNetModified (is_compiled = {is_compiled})."
-                    )
-                else:
-                    print(
-                        f"Skipping torch.compile for SPyNetModified: PyTorch version {pt_version} is less than 2.0."
-                    )
-            except Exception as e_compile_runtime:
-                print(
-                    f"WARNING: Failed to compile or run dummy forward pass for SPyNetModified with mode '{compile_mode}'. Reverting to non-compiled model. Error: {e_compile_runtime}"
-                )
-                self.spynet_m = original_spynet_m_for_fallback  # Revert to original
-
-            # Store compilation status for __getitem__ to decide on cloning
-            self.spynet_m_is_compiled_and_cuda = is_compiled and (
-                self.spynet_target_device.type == "cuda"
-            )
-
-        elif self.spynet_target_device.type != "cuda":
-            print(
-                "Skipping torch.compile for SPyNetModified as spynet_target_device is not CUDA."
-            )
-            self.spynet_m_is_compiled_and_cuda = False
-        else:  # hasattr(torch, "compile") is False
-            print(
-                "Skipping torch.compile for SPyNetModified: torch.compile not available (likely PyTorch < 2.0)."
-            )
-            self.spynet_m_is_compiled_and_cuda = False
-
         self.to_tensor = T.ToTensor()
 
     def _load_vimeo_sequences(self):
@@ -405,13 +332,6 @@ class InpaintingDataset(Dataset):
                     input_k_rgbm.unsqueeze(0), input_j_rgbm.unsqueeze(0)
                 ).squeeze(0)
             # f_kj_m_tensor is now on self.spynet_target_device
-
-            # CRITICAL FIX for CUDAGraphs error: Clone the output of the compiled model
-            if (
-                hasattr(self, "spynet_m_is_compiled_and_cuda")
-                and self.spynet_m_is_compiled_and_cuda
-            ):
-                f_kj_m_tensor = f_kj_m_tensor.clone()
 
             I_j_m_content_to_warp = I_j_current_tensor * (1 - S_j_current_tensor)
 
