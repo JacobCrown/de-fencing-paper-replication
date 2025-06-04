@@ -80,14 +80,17 @@ def flow_to_rgb(flow_uv: torch.Tensor) -> torch.Tensor:
 
 
 class VisualizePrecomputedConfig:
-    precomputed_data_dir: str = "data_precomputed/rdn_data/val"  # Default to val set
+    data_directory: str = "data/"
+    precomputed_data_dir: str = (
+        data_directory + "data_precomputed/rdn_data/val"
+    )  # Default to val set
     # Optional: Path to generation_config.json used for data creation.
     # Helps in automatically determining k_frames and num_input_channels.
     generation_config_path: Optional[str] = (
-        "data_precomputed/rdn_data/generation_config.json"
+        data_directory + "data_precomputed/rdn_data/generation_config.json"
     )
 
-    num_samples_to_visualize: int = 5
+    num_samples_to_visualize: int = 15
     # output_viz_dir: str = "./rdn_precomputed_visualizations" # Old path
 
     # New output structure
@@ -364,23 +367,6 @@ def visualize_precomputed_samples(config: VisualizePrecomputedConfig):
 
 
 if __name__ == "__main__":
-    # --- Configuration for the visualization ---
-    # Ensure these paths are correct for your setup
-    vis_config = VisualizePrecomputedConfig(
-        precomputed_data_dir="data_precomputed/rdn_data/val",  # Or your train data
-        generation_config_path="data_precomputed/rdn_data/generation_config.json",
-        num_samples_to_visualize=10,
-        # output_viz_dir is now constructed internally based on base_output_dir etc.
-        # Example: Override base_output_dir if needed:
-        # base_output_dir="my_custom_outputs"
-    )
-
-    # Example: If you want to visualize training data and its gen_config is elsewhere:
-    # vis_config = VisualizePrecomputedConfig(
-    #     precomputed_data_dir="data_precomputed/rdn_data/train",
-    #     generation_config_path="data_precomputed/rdn_data/generation_config.json", # Assuming same config for train/val
-    #     num_samples_to_visualize=2,
-    #     output_viz_dir="./rdn_precomputed_train_viz"
-    # )
+    vis_config = VisualizePrecomputedConfig()
 
     visualize_precomputed_samples(vis_config)

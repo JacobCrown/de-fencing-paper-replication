@@ -43,9 +43,11 @@ DEFAULT_NUM_OUTPUT_CHANNELS = 3
 
 class EvalConfig:
     # Paths
-    checkpoint_path: str = "output/rdn_inpainting/training_precomputed/20250603-192855/checkpoints/rdn_precomp_best.pth"  # Path to the RDN model to evaluate
+    data_directory: str = "data/"
+    checkpoint_path: str = "output/rdn_inpainting/training_precomputed/20250604-225226/checkpoints/rdn_precomp_best.pth"  # Path to the RDN model to evaluate
     precomputed_test_data_dir: str = (
-        "data_precomputed/rdn_data/test"  # Path to precomputed test data
+        data_directory
+        + "data_precomputed/rdn_data/test"  # Path to precomputed test data
     )
 
     # New output structure:

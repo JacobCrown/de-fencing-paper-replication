@@ -30,27 +30,28 @@ from precomputed_rdn_dataset import PrecomputedRDNDataset  # From rdn/test/
 
 class PrecomputedTrainConfig:
     # Paths
-    precomputed_train_data_dir: str = "data_precomputed/rdn_data/train"
-    precomputed_val_data_dir: Optional[str] = "data_precomputed/rdn_data/val"
+    data_directory: str = "data/"
+    precomputed_train_data_dir: str = data_directory + "data_precomputed/rdn_data/train"
+    precomputed_val_data_dir: Optional[str] = (
+        data_directory + "data_precomputed/rdn_data/val"
+    )
     # New output structure:
     base_output_dir: str = "output"  # Base for all outputs
     module_name: str = "rdn_inpainting"  # Specific module
     experiment_name: str = "training_precomputed"  # Specific experiment/run type
     # outputs_dir will be dynamically constructed: output/rdn_inpainting/training_precomputed/[timestamp_or_id]
     # checkpoint_dir will be [outputs_dir]/checkpoints
-    resume_checkpoint: Optional[str] = (
-        "output/rdn_inpainting/training_precomputed/20250603-192855/checkpoints/rdn_precomp_epoch10.pth"
-    )
+    resume_checkpoint: Optional[str] = None
     generation_config_path: Optional[str] = (
-        "data_precomputed/rdn_data/generation_config.json"
+        data_directory + "data_precomputed/rdn_data/generation_config.json"
     )
 
     # RDN Architecture (will be overridden by generation_config if provided and valid)
     # These are placeholders; ideally, they match what was used for data generation.
-    num_features: int = 2
-    growth_rate: int = 2
-    num_blocks: int = 2
-    num_layers: int = 2
+    num_features: int = 48
+    growth_rate: int = 48
+    num_blocks: int = 10
+    num_layers: int = 4
     k_frames: int = 5  # Should match data generation
     num_output_channels: int = 3  # Typically 3 for RGB
     num_input_channels: Optional[int] = None  # Derived from k_frames or gen_config
@@ -63,12 +64,12 @@ class PrecomputedTrainConfig:
     beta1: float = 0.9
     beta2: float = 0.999
     epsilon: float = 1e-8
-    num_epochs: int = 50
-    batch_size: int = 16
+    num_epochs: int = 10000
+    batch_size: int = 32
     start_epoch: int = 0
 
     # Checkpointing & Saving
-    save_every_n_epochs: int = 1
+    save_every_n_epochs: int = 50
     save_best_model_only_on_val: bool = True
 
     # Enhancements (subset fractions are not used as dataset size is fixed by precomputation)

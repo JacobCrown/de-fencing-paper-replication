@@ -34,17 +34,18 @@ except ImportError as e:
 
 class GenerationConfig:
     # Paths
-    vimeo_dir: str = "data_raw/vimeo_test_clean/sequences"
-    defencing_dir: str = "data_raw/De-fencing-master/dataset"
-    output_base_dir: str = "data_precomputed/rdn_data"
+    data_directory: str = "data/"
+    vimeo_dir: str = data_directory + "data_raw/vimeo_test_clean/sequences"
+    defencing_dir: str = data_directory + "data_raw/De-fencing-master/dataset"
+    output_base_dir: str = data_directory + "data_precomputed/rdn_data"
     spynet_m_weights_path: str = (
         "spynet_checkpoints/spynet_modified_ddp_epoch_ddp158_20250529-093520.pth"
     )
 
     # Generation parameters
-    num_train_samples: int = 100
-    num_val_samples: int = 20
-    num_test_samples: int = 20
+    num_train_samples: int = 3000
+    num_val_samples: int = 300
+    num_test_samples: int = 300
     k_frames: int = 5
     img_width: int = 320
     img_height: int = 192
@@ -54,16 +55,7 @@ class GenerationConfig:
     # Option 1: Specify ratios (test_split_ratio is derived: 1 - train - val)
     train_split_ratio: Optional[float] = 0.8
     val_split_ratio: Optional[float] = 0.1
-    # Option 2: Specify direct list files (relative to os.path.dirname(vimeo_dir))
-    vimeo_train_list_file: Optional[str] = "sep_trainlist.txt"
-    vimeo_val_list_file: Optional[str] = (
-        "sep_testlist.txt"  # Common to use test list for validation if no specific val list
-    )
-    vimeo_test_list_file: Optional[str] = "sep_testlist.txt"  # Or a dedicated test list
-    # Fallback if specific list files are not found and ratios are to be used
-    vimeo_master_list_file: Optional[str] = (
-        "sep_testlist.txt"  # A file containing all sequences to be split
-    )
+    vimeo_master_list_file: str = "sep_testlist.txt"
 
     # Misc
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -281,77 +273,6 @@ def get_vimeo_data_splits(config: GenerationConfig) -> Dict[str, List[List[str]]
     )  # Dir containing sep_*.txt files
 
     data_splits: Dict[str, List[List[str]]] = {"train": [], "val": [], "test": []}
-    loaded_from_specific_files = True
-
-    # Attempt to load from specific list files
-    if config.vimeo_train_list_file:
-        path = os.path.join(vimeo_list_dir, config.vimeo_train_list_file)
-        data_splits["train"] = _load_vimeo_sequences_from_file(
-            path, config.vimeo_dir, config.k_frames
-        )
-        if not data_splits["train"]:
-            loaded_from_specific_files = False
-    else:
-        loaded_from_specific_files = False
-
-    if config.vimeo_val_list_file:
-        path = os.path.join(vimeo_list_dir, config.vimeo_val_list_file)
-        data_splits["val"] = _load_vimeo_sequences_from_file(
-            path, config.vimeo_dir, config.k_frames
-        )
-        if not data_splits["val"]:
-            loaded_from_specific_files = False
-    else:
-        loaded_from_specific_files = False
-
-    if config.vimeo_test_list_file:
-        path = os.path.join(vimeo_list_dir, config.vimeo_test_list_file)
-        data_splits["test"] = _load_vimeo_sequences_from_file(
-            path, config.vimeo_dir, config.k_frames
-        )
-        if not data_splits["test"]:
-            loaded_from_specific_files = False
-    else:
-        loaded_from_specific_files = False
-
-    if loaded_from_specific_files and all(data_splits.values()):
-        print("Loaded Vimeo data splits from specific list files.")
-        # Ensure disjointness if loaded from different files that might overlap (e.g. val and test from same sep_testlist.txt)
-        # This simple load assumes files are already disjoint or user manages overlap.
-        # A more robust way would be to load all unique sequences and then assign.
-        # For now, if val and test come from same file, they will be identical if counts allow.
-        # This needs to be handled by how num_val_samples and num_test_samples are used.
-        # Or, ensure a true master list is split.
-        # Let's assume for now if sep_trainlist and sep_testlist are used, train is disjoint from test.
-        # If val and test use the same list, they will sample from the same pool.
-        # This is acceptable if num_val_samples + num_test_samples <= len(pool)
-        # and the random sampling in the generation loop handles picking unique items.
-        # However, the *source lists* themselves should ideally be disjoint if loaded separately.
-
-        # If val and test lists are the same, and we need them to be disjoint *pools* for sampling from later.
-        if (
-            config.vimeo_val_list_file == config.vimeo_test_list_file
-            and config.vimeo_val_list_file is not None
-        ):
-            print(
-                f"Warning: Vimeo val and test lists are the same ('{config.vimeo_val_list_file}')."
-            )
-            print(
-                "If ratios are not used, val and test data will be sampled from the same pool of sequences."
-            )
-            # If num_val_samples and num_test_samples are set, the random sampling later might pick different subsets.
-            # But it's better if the source lists for splitting are distinct or a master list is split.
-            # For now, we proceed, assuming the user understands this or will use ratios.
-
-        return data_splits
-
-    print(
-        "Specific Vimeo list files not fully specified or found. Falling back to master list and ratios."
-    )
-    if not config.vimeo_master_list_file:
-        raise ValueError(
-            "Master Vimeo list file (vimeo_master_list_file) must be specified if using ratios."
-        )
 
     master_list_path = os.path.join(vimeo_list_dir, config.vimeo_master_list_file)
     all_sequences = _load_vimeo_sequences_from_file(
@@ -482,9 +403,24 @@ def main():
         # However, random.choice allows replacement by default, so it's more about managing expectations.
         # For now, we'll proceed and let it sample with replacement if num_samples_to_gen > len(source_vimeo_sequences)
 
+        existing_files = sorted(
+            glob.glob(os.path.join(output_dir_specific, "sample_*.pt"))
+        )
+        existing_indices = [
+            int(os.path.basename(f).split("_")[1].split(".")[0]) for f in existing_files
+        ]
+        start_idx = max(existing_indices) + 1 if existing_indices else 0
+        num_to_generate = max(0, num_samples_to_gen - len(existing_indices))
+
         for i in tqdm(
-            range(num_samples_to_gen), desc=f"Generating {dataset_type} data"
+            range(start_idx, start_idx + num_to_generate),
+            desc=f"Generating {dataset_type} data",
         ):
+            # Ustaw seed zależny od numeru sampla
+            torch.manual_seed(gen_config.random_seed + i)
+            np.random.seed(gen_config.random_seed + i)
+            random.seed(gen_config.random_seed + i)
+
             if not source_vimeo_sequences:  # Should be caught above, but as a safeguard
                 print(
                     f"Error: No source sequences for {dataset_type} to generate sample {i}. Stopping generation for this set."
