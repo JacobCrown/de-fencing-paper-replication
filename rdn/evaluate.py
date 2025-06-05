@@ -44,7 +44,7 @@ DEFAULT_NUM_OUTPUT_CHANNELS = 3
 class EvalConfig:
     # Paths
     data_directory: str = "data/"
-    checkpoint_path: str = "output/rdn_inpainting/training_precomputed/20250604-225226/checkpoints/rdn_precomp_best.pth"  # Path to the RDN model to evaluate
+    checkpoint_path: str = "rdn/rdn_precomp_best.pth"
     precomputed_test_data_dir: str = (
         data_directory
         + "data_precomputed/rdn_data/test"  # Path to precomputed test data
@@ -69,6 +69,7 @@ class EvalConfig:
     # eval_subset_fraction: Optional[float] = None # Subset logic might not apply directly to PrecomputedRDNDataset
     # eval_num_samples: Optional[int] = 100 # PrecomputedRDNDataset loads all samples in dir
     save_eval_images: bool = True
+    num_samples_to_visualize: int = 10  # Nowy parametr: ile przykładów wizualizować
 
     # Image/Patch size (DEFAULTS - checkpoint values will override)
     img_width: int = DEFAULT_IMG_WIDTH
@@ -264,6 +265,7 @@ def evaluate_model(eval_config_obj: EvalConfig):
 
     print("--- Starting evaluation ---")
     total_psnr, total_ssim, num_images_processed = 0.0, 0.0, 0
+    num_visualized = 0  # Licznik wizualizowanych przykładów
     with torch.inference_mode():
         for batch_idx, (f_in_batch, i_k_m_batch, b_k_batch) in tqdm(
             enumerate(eval_dataloader), total=len(eval_dataloader), desc="Evaluating"
@@ -327,37 +329,103 @@ def evaluate_model(eval_config_obj: EvalConfig):
                     continue  # Skip this image for metrics
 
                 if (
-                    eval_config_obj.save_eval_images and batch_idx == 0 and i < 2
-                ):  # Save first few of first batch
-                    # os.makedirs(eval_config_obj.eval_outputs_dir, exist_ok=True) # Already created above
-                    save_pred_path = os.path.join(
-                        visualizations_subdir,  # Use new path
-                        f"pred_batch{batch_idx}_img{i}.png",
-                    )
-                    save_gt_path = os.path.join(
-                        visualizations_subdir,  # Use new path
-                        f"gt_batch{batch_idx}_img{i}.png",
-                    )
-                    save_masked_path = os.path.join(
-                        visualizations_subdir,  # Use new path
-                        f"masked_input_batch{batch_idx}_img{i}.png",
-                    )
-
-                    Image.fromarray((pred_img_np * 255).astype(np.uint8)).save(
-                        save_pred_path
-                    )
-                    Image.fromarray((gt_img_np * 255).astype(np.uint8)).save(
-                        save_gt_path
-                    )
-
+                    eval_config_obj.save_eval_images
+                    and num_visualized < eval_config_obj.num_samples_to_visualize
+                ):
+                    # Przygotuj obrazy do połączenia
+                    gt_img = (gt_img_np * 255).astype(np.uint8)
+                    pred_img = (pred_img_np * 255).astype(np.uint8)
                     i_k_m_img_np = i_k_m_batch[i].cpu().permute(1, 2, 0).numpy()
                     i_k_m_img_np = np.clip(i_k_m_img_np, 0, 1)
-                    Image.fromarray((i_k_m_img_np * 255).astype(np.uint8)).save(
-                        save_masked_path
+                    masked_img = (i_k_m_img_np * 255).astype(np.uint8)
+
+                    # Zamiana na PIL
+                    pil_gt = Image.fromarray(gt_img)
+                    pil_masked = Image.fromarray(masked_img)
+                    pil_pred = Image.fromarray(pred_img)
+
+                    # Dodaj labelki nad obrazami
+                    from PIL import ImageDraw, ImageFont
+
+                    font = None
+                    try:
+                        font = ImageFont.truetype("arial.ttf", 18)
+                    except:
+                        font = ImageFont.load_default()
+
+                    def add_label(img, label):
+                        w, h = img.size
+                        label_height = 30
+                        new_img = Image.new(
+                            "RGB", (w, h + label_height), (255, 255, 255)
+                        )
+                        new_img.paste(img, (0, label_height))
+                        draw = ImageDraw.Draw(new_img)
+                        try:
+                            bbox = draw.textbbox((0, 0), label, font=font)
+                            text_w = bbox[2] - bbox[0]
+                            text_h = bbox[3] - bbox[1]
+                        except AttributeError:
+                            text_w, text_h = draw.textsize(label, font=font)
+                        draw.text(
+                            ((w - text_w) // 2, (label_height - text_h) // 2),
+                            label,
+                            fill=(0, 0, 0),
+                            font=font,
+                        )
+                        return new_img
+
+                    def add_stats_bar(img, psnr_val, ssim_val):
+                        w, h = img.size
+                        stats_height = 28
+                        new_img = Image.new(
+                            "RGB", (w, h + stats_height), (255, 255, 255)
+                        )
+                        new_img.paste(img, (0, 0))
+                        draw = ImageDraw.Draw(new_img)
+                        stats_text = f"PSNR: {psnr_val:.2f} dB | SSIM: {ssim_val:.3f}"
+                        try:
+                            bbox = draw.textbbox((0, 0), stats_text, font=font)
+                            text_w = bbox[2] - bbox[0]
+                            text_h = bbox[3] - bbox[1]
+                        except AttributeError:
+                            text_w, text_h = draw.textsize(stats_text, font=font)
+                        draw.text(
+                            ((w - text_w) // 2, h + (stats_height - text_h) // 2),
+                            stats_text,
+                            fill=(0, 0, 0),
+                            font=font,
+                        )
+                        return new_img
+
+                    pil_gt = add_label(pil_gt, "GT (Ground Truth)")
+                    pil_masked = add_label(pil_masked, "Masked Input (I_k^m)")
+                    pil_pred = add_label(pil_pred, "Prediction")
+                    pil_pred = add_stats_bar(
+                        pil_pred,
+                        current_psnr,
+                        current_ssim if not np.isnan(current_ssim) else 0.0,
                     )
-                    print(
-                        f"Saved example images to {visualizations_subdir}"
-                    )  # Log new path
+
+                    # Połącz w jeden obraz (w poziomie)
+                    total_width = pil_gt.width + pil_masked.width + pil_pred.width
+                    max_height = max(pil_gt.height, pil_masked.height, pil_pred.height)
+                    combined = Image.new(
+                        "RGB", (total_width, max_height), (255, 255, 255)
+                    )
+                    combined.paste(pil_gt, (0, 0))
+                    combined.paste(pil_masked, (pil_gt.width, 0))
+                    combined.paste(pil_pred, (pil_gt.width + pil_masked.width, 0))
+
+                    save_combined_path = os.path.join(
+                        visualizations_subdir,
+                        f"viz_batch{batch_idx}_img{i}.png",
+                    )
+                    combined.save(save_combined_path)
+                    print(f"Saved combined visualization to {save_combined_path}")
+                    num_visualized += 1
+                    if num_visualized >= eval_config_obj.num_samples_to_visualize:
+                        break
 
     if num_images_processed > 0:
         avg_psnr = total_psnr / num_images_processed
