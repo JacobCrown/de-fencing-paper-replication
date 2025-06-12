@@ -44,7 +44,7 @@ DEFAULT_NUM_OUTPUT_CHANNELS = 3
 class EvalConfig:
     # Paths
     data_directory: str = "data/"
-    checkpoint_path: str = "rdn/rdn_precomp_best.pth"
+    checkpoint_path: str = "rdn/test/rdn_precomp_best.pth"
     precomputed_test_data_dir: str = (
         data_directory
         + "data_precomputed/rdn_data/test"  # Path to precomputed test data

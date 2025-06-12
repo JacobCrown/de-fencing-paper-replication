@@ -68,7 +68,7 @@ class SPyNetModified(nn.Module):
                 # For RGB channels (first 3)
                 self.mean_rgb = torch.tensor([0.485, 0.456, 0.406])
                 self.std_rgb = torch.tensor(
-                    [0.229, 1.0 / 0.224, 1.0 / 0.225]
+                    [1.0 / 0.229, 1.0 / 0.224, 1.0 / 0.225]
                 )  # Original has 1.0/std
 
             def forward(self, tenInput_rgbm):  # Expects B, C, H, W where C is 4 (RGBM)

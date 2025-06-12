@@ -43,8 +43,8 @@ class GenerationConfig:
     )
 
     # Generation parameters
-    num_train_samples: int = 3000
-    num_val_samples: int = 300
+    num_train_samples: int = 0
+    num_val_samples: int = 0
     num_test_samples: int = 300
     k_frames: int = 5
     img_width: int = 320
